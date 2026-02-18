@@ -35,7 +35,9 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ],
       "edgeToEdgeEnabled": true
     },
@@ -56,6 +58,11 @@
           "color": "#ffffff"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4afb9fde-5cd4-4943-a964-40b20ee0b0c6"
+      }
+    }
   }
 }

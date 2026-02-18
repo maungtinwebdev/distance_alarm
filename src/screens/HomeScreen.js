@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView } from 'react-native';
+import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView, Linking } from 'react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from '../components/MapComponent';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
@@ -45,7 +45,14 @@ const HomeScreen = () => {
       if (Platform.OS !== 'web') {
         let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
         if (bgStatus !== 'granted') {
-           console.log('Background location permission not granted');
+           Alert.alert(
+             'Background Location Required',
+             'This app needs background location access to trigger the alarm when the app is closed. Please select "Allow all the time" in settings.',
+             [
+               { text: 'Cancel', style: 'cancel' },
+               { text: 'Open Settings', onPress: () => Linking.openSettings() }
+             ]
+           );
         }
       }
 
