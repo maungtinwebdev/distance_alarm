@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDistance } from '../utils/location';
 import { LOCATION_TASK_NAME } from '../services/LocationTask';
-import { getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration } from '../services/SoundService';
+import { getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration as saveCustomVibrationDuration } from '../services/SoundService';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -93,7 +93,7 @@ const HomeScreen = () => {
       
       // Load custom vibration duration
       const savedDuration = await getCustomVibrationDuration();
-      setCustomVibrationDuration(savedDuration.toString());
+      setCustomVibrationDuration(savedDuration ? savedDuration.toString() : '500');
 
       // Check if task is already running
       if (Platform.OS !== 'web') {
@@ -159,7 +159,7 @@ const HomeScreen = () => {
   const handleCustomVibrationChange = async (duration) => {
     setCustomVibrationDuration(duration);
     const numDuration = parseInt(duration) || 500;
-    await setCustomVibrationDuration(numDuration);
+    await saveCustomVibrationDuration(numDuration);
   };
 
   const openSettingsModal = () => {
@@ -199,6 +199,13 @@ const HomeScreen = () => {
       await AsyncStorage.setItem('targetLocation', JSON.stringify(destination));
       await AsyncStorage.setItem('alarmRadius', alarmRadius);
       await AsyncStorage.setItem('isTracking', 'true');
+      
+      // Save sound and vibration preferences
+      await setSoundPreference(selectedSound);
+      await setVibrationPreference(selectedVibration);
+      if (selectedVibration === 'CUSTOM') {
+        await saveCustomVibrationDuration(parseInt(customVibrationDuration) || 500);
+      }
 
       // Start background task
       if (Platform.OS !== 'web') {

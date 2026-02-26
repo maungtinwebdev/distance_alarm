@@ -61,8 +61,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "4afb9fde-5cd4-4943-a964-40b20ee0b0c6"
+        "projectId": "42255355-12b8-42a9-baec-bcf62690a183"
       }
-    }
+    },
+    "owner": "bruno18farnandes"
   }
 }

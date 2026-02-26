@@ -11,10 +11,10 @@ export const SOUND_TYPES = {
 };
 
 export const VIBRATION_PATTERNS = {
-  LIGHT: { name: 'Light', pattern: [0, 200] },
-  MEDIUM: { name: 'Medium', pattern: [0, 400, 200, 400] },
-  HEAVY: { name: 'Heavy', pattern: [0, 600, 300, 600] },
-  INTENSE: { name: 'Intense', pattern: [0, 500, 100, 500, 100, 500] },
+  LIGHT: { name: 'Light', pattern: [0, 150, 100, 150, 100, 150] },
+  MEDIUM: { name: 'Medium', pattern: [0, 300, 150, 300, 150, 300, 150, 300] },
+  HEAVY: { name: 'Heavy', pattern: [0, 500, 200, 500, 200, 500, 200, 500, 200, 500] },
+  INTENSE: { name: 'Intense', pattern: [0, 400, 100, 400, 100, 400, 100, 400, 100, 400, 100, 400, 100, 400] },
   CUSTOM: { name: 'Custom', pattern: null },
 };
 
@@ -80,12 +80,25 @@ export const setCustomVibrationDuration = async (duration) => {
   await AsyncStorage.setItem('customVibrationDuration', duration.toString());
 };
 
-// Get vibration pattern array
+// Get vibration pattern array - repeats pattern for longer duration
 export const getVibrationArray = (patternKey, customDuration = 500) => {
   if (patternKey === 'CUSTOM') {
     return [0, customDuration];
   }
-  return VIBRATION_PATTERNS[patternKey]?.pattern || VIBRATION_PATTERNS.MEDIUM.pattern;
+  
+  const basePattern = VIBRATION_PATTERNS[patternKey]?.pattern || VIBRATION_PATTERNS.MEDIUM.pattern;
+  
+  if (!basePattern || basePattern.length === 0) {
+    return [0, 300];
+  }
+  
+  // For LIGHT patterns, repeat 2 times
+  if (patternKey === 'LIGHT') {
+    return [...basePattern, 100, ...basePattern];
+  }
+  
+  // For other patterns, use as-is (they're already long)
+  return basePattern;
 };
 
 // Get all available sounds
@@ -117,12 +130,18 @@ export const sendAlarmNotification = async (title, body, soundType = SOUND_TYPES
         sound: 'default',
         priority: Notifications.AndroidNotificationPriority.MAX,
         vibrate: vibrationArray,
+        ios: {
+          sound: true,
+          badge: 1,
+          vibrate: true,
+        },
         android: {
           sound: 'default',
           channelId: 'alarm_channel',
           vibrate: vibrationArray,
           priority: 'high',
           smallIcon: 'ic_launcher',
+          vibrationPattern: vibrationArray,
         },
       },
       trigger: null,
@@ -136,16 +155,17 @@ export const sendAlarmNotification = async (title, body, soundType = SOUND_TYPES
 export const setupNotificationChannels = async () => {
   if (Platform.OS === 'android') {
     try {
-      // Create alarm channel with high priority
+      // Create alarm channel with high priority and default vibration pattern
       await Notifications.setNotificationChannelAsync('alarm_channel', {
         name: 'Alarm Notifications',
         importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 500, 250, 500],
+        vibrationPattern: [0, 500, 200, 500, 200, 500],
         lightColor: '#FF00FF',
-        sound: 'alarm',
+        sound: 'default',
         bypassDnd: true,
         enableVibrate: true,
         enableLights: true,
+        showBadge: true,
       });
 
       // Create default channel
