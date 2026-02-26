@@ -1,11 +1,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView } from 'react-native';
+import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView, Linking, Animated, Dimensions } from 'react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from '../components/MapComponent';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { useKeepAwake } from 'expo-keep-awake';
-import { TextInput, Button, Text, Appbar, Surface, useTheme } from 'react-native-paper';
+import { TextInput, Button, Text, Appbar, Surface, useTheme, FAB, Chip, SegmentedButtons, ActivityIndicator } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDistance } from '../utils/location';
@@ -24,15 +24,17 @@ const HomeScreen = () => {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const mapRef = useRef(null);
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const [location, setLocation] = useState(null);
   const [destination, setDestination] = useState(null);
-  const [alarmRadius, setAlarmRadius] = useState('500'); // meters
+  const [alarmRadius, setAlarmRadius] = useState('500');
   const [isTracking, setIsTracking] = useState(false);
   const [distanceToDest, setDistanceToDest] = useState(null);
-  
-  // Foreground subscription for UI updates
   const [foregroundSub, setForegroundSub] = useState(null);
+  const [radiusPreset, setRadiusPreset] = useState('500');
+  const [isLoading, setIsLoading] = useState(false);
+  const [locationUpdates, setLocationUpdates] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -45,7 +47,14 @@ const HomeScreen = () => {
       if (Platform.OS !== 'web') {
         let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
         if (bgStatus !== 'granted') {
-           console.log('Background location permission not granted');
+           Alert.alert(
+             'Background Location Required',
+             'This app needs background location access to trigger the alarm when the app is closed. Please select "Allow all the time" in settings.',
+             [
+               { text: 'Cancel', style: 'cancel' },
+               { text: 'Open Settings', onPress: () => Linking.openSettings() }
+             ]
+           );
         }
       }
 
@@ -95,11 +104,12 @@ const HomeScreen = () => {
     const sub = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.High,
-        timeInterval: 2000,
+        timeInterval: 1000,
         distanceInterval: 5,
       },
       (newLocation) => {
         setLocation(newLocation.coords);
+        setLocationUpdates(prev => prev + 1);
       }
     );
     setForegroundSub(sub);
@@ -107,16 +117,17 @@ const HomeScreen = () => {
 
   const startTracking = async () => {
     if (!destination) {
-      Alert.alert('Please select a destination on the map');
+      Alert.alert('Select Destination', 'Please tap on the map to select a destination');
       return;
     }
 
     const radius = parseFloat(alarmRadius);
     if (isNaN(radius) || radius <= 0) {
-      Alert.alert('Please enter a valid alarm radius');
+      Alert.alert('Invalid Radius', 'Please enter a radius greater than 0');
       return;
     }
 
+    setIsLoading(true);
     try {
       // Save state for background task
       await AsyncStorage.setItem('targetLocation', JSON.stringify(destination));
@@ -132,7 +143,7 @@ const HomeScreen = () => {
           showsBackgroundLocationIndicator: true,
           foregroundService: {
             notificationTitle: "Distance Alarm Active",
-            notificationBody: "Tracking your location to alert you.",
+            notificationBody: "Tracking your location...",
             notificationColor: theme.colors.primary,
           },
         });
@@ -142,10 +153,27 @@ const HomeScreen = () => {
       await startForegroundTracking();
       
       setIsTracking(true);
-      Alert.alert('Alarm Set', 'You will be notified when you reach the destination area.');
+      
+      // Animate button
+      Animated.sequence([
+        Animated.timing(scaleAnim, {
+          toValue: 1.05,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 1,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      
+      Alert.alert('Alarm Active', 'You will be notified when you reach your destination');
     } catch (e) {
       console.error(e);
       Alert.alert('Error', 'Failed to start tracking: ' + e.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -179,8 +207,11 @@ const HomeScreen = () => {
 
   return (
     <View style={styles.container}>
-      <Appbar.Header elevated>
-        <Appbar.Content title="Distance Alarm" />
+      <Appbar.Header elevated style={{ backgroundColor: theme.colors.surface }}>
+        <Appbar.Content 
+          title="Distance Alarm" 
+          subtitle={isTracking ? "• Tracking Active" : ""}
+        />
       </Appbar.Header>
 
       <View style={styles.mapContainer}>
@@ -204,8 +235,9 @@ const HomeScreen = () => {
                 <Circle
                   center={destination}
                   radius={parseFloat(alarmRadius) || 0}
-                  strokeColor="rgba(255, 0, 0, 0.5)"
-                  fillColor="rgba(255, 0, 0, 0.2)"
+                  strokeColor="rgba(220, 53, 69, 0.8)"
+                  fillColor="rgba(220, 53, 69, 0.15)"
+                  strokeWidth={2}
                 />
               </>
             )}
@@ -213,35 +245,100 @@ const HomeScreen = () => {
         )}
       </View>
 
-      <Surface style={[styles.controls, { paddingBottom: Math.max(16, insets.bottom) }]} elevation={4}>
-        <View style={styles.inputRow}>
-          <TextInput
-            mode="outlined"
-            label="Alarm Radius (meters)"
-            value={alarmRadius}
-            onChangeText={setAlarmRadius}
-            keyboardType="numeric"
-            style={styles.input}
-            disabled={isTracking}
-          />
-        </View>
-
-        {distanceToDest !== null && (
-          <View style={styles.infoRow}>
-            <Text variant="titleMedium" style={{color: theme.colors.primary}}>
-              Distance: {Math.round(distanceToDest)}m
-            </Text>
-          </View>
+      <Surface style={[styles.controlsPanel, { paddingBottom: Math.max(16, insets.bottom) }]} elevation={8}>
+        {/* Status Card */}
+        {isTracking && distanceToDest !== null && (
+          <Surface style={[styles.statusCard, { backgroundColor: theme.colors.primaryContainer }]} elevation={2}>
+            <View style={styles.statusContent}>
+              <Text variant="labelSmall" style={{ color: theme.colors.primary }}>DISTANCE TO DESTINATION</Text>
+              <View style={styles.distanceRow}>
+                <Text variant="displaySmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
+                  {Math.round(distanceToDest)}
+                </Text>
+                <Text variant="headlineSmall" style={{ color: theme.colors.primary, marginLeft: 8, marginTop: 4 }}>m</Text>
+              </View>
+              {distanceToDest <= parseFloat(alarmRadius) && (
+                <Chip 
+                  icon="check-circle" 
+                  style={{ backgroundColor: '#4CAF50', marginTop: 8 }}
+                  textStyle={{ color: '#fff' }}
+                >
+                  Within Alarm Zone
+                </Chip>
+              )}
+            </View>
+          </Surface>
         )}
 
+        {!isTracking && destination && (
+          <Surface style={[styles.statusCard, { backgroundColor: theme.colors.inverseOnSurface }]} elevation={2}>
+            <View style={styles.statusContent}>
+              <Text variant="labelSmall">SELECTED DESTINATION</Text>
+              <Text variant="bodyMedium" style={{ marginTop: 8 }}>
+                {destination.latitude.toFixed(4)}°, {destination.longitude.toFixed(4)}°
+              </Text>
+            </View>
+          </Surface>
+        )}
+
+        {/* Radius Preset Buttons */}
+        <View style={styles.presetSection}>
+          <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>
+            Quick Presets
+          </Text>
+          <View style={styles.presetButtons}>
+            {['100', '500', '1000', '5000'].map((preset) => (
+              <Button
+                key={preset}
+                mode={radiusPreset === preset ? 'contained' : 'outlined'}
+                compact
+                onPress={() => {
+                  setRadiusPreset(preset);
+                  setAlarmRadius(preset);
+                }}
+                style={styles.presetButton}
+              >
+                {preset}m
+              </Button>
+            ))}
+          </View>
+        </View>
+
+        {/* Custom Radius Input */}
+        <TextInput
+          mode="outlined"
+          label="Custom Radius (meters)"
+          value={alarmRadius}
+          onChangeText={(text) => {
+            setAlarmRadius(text);
+            setRadiusPreset('');
+          }}
+          keyboardType="numeric"
+          style={styles.input}
+          disabled={isTracking}
+          left={<TextInput.Icon icon="ruler" />}
+        />
+
+        {/* Main Action Button */}
         <Button
           mode="contained"
           onPress={isTracking ? stopTracking : startTracking}
-          style={styles.button}
+          style={[styles.mainButton, { marginTop: 16 }]}
           buttonColor={isTracking ? theme.colors.error : theme.colors.primary}
+          loading={isLoading}
+          disabled={isLoading || !location}
+          labelStyle={{ fontSize: 16, fontWeight: 'bold' }}
         >
-          {isTracking ? 'Stop Alarm' : 'Set Alarm'}
+          {isLoading ? 'Processing...' : isTracking ? '● Stop Tracking' : '◆ Start Alarm'}
         </Button>
+
+        {isTracking && (
+          <View style={styles.infoFooter}>
+            <Text variant="labelSmall" style={{ color: theme.colors.outline, textAlign: 'center' }}>
+              GPS updates: {locationUpdates}
+            </Text>
+          </View>
+        )}
       </Surface>
     </View>
   );
@@ -250,7 +347,7 @@ const HomeScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f5f5f5',
   },
   mapContainer: {
     flex: 1,
@@ -258,24 +355,55 @@ const styles = StyleSheet.create({
   map: {
     ...StyleSheet.absoluteFillObject,
   },
-  controls: {
+  controlsPanel: {
     padding: 16,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
   },
-  inputRow: {
-    marginBottom: 12,
+  statusCard: {
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#dc3545',
+  },
+  statusContent: {
+    paddingVertical: 8,
+  },
+  distanceRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 12,
+  },
+  presetSection: {
+    marginBottom: 16,
+  },
+  presetButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  presetButton: {
+    flex: 1,
+    borderRadius: 8,
   },
   input: {
-    backgroundColor: '#fff',
-  },
-  infoRow: {
-    alignItems: 'center',
+    backgroundColor: '#f9f9f9',
     marginBottom: 12,
+    borderRadius: 8,
   },
-  button: {
-    marginTop: 4,
+  mainButton: {
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  infoFooter: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
   },
 });
 
