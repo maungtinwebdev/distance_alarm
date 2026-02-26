@@ -5,7 +5,7 @@ import MapView, { Marker, Circle, PROVIDER_DEFAULT } from '../components/MapComp
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { useKeepAwake } from 'expo-keep-awake';
-import { TextInput, Button, Text, Appbar, Surface, useTheme, FAB, Chip, SegmentedButtons, ActivityIndicator, Menu, Divider, IconButton } from 'react-native-paper';
+import { TextInput, Button, Text, Appbar, Surface, useTheme, FAB, Chip, SegmentedButtons, ActivityIndicator, Menu, Divider, IconButton, MD3LightTheme, MD3DarkTheme, Provider as PaperProvider } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDistance } from '../utils/location';
@@ -20,7 +20,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
-const HomeScreen = () => {
+const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   useKeepAwake();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -45,6 +45,7 @@ const HomeScreen = () => {
   const [customVibrationDuration, setCustomVibrationDuration] = useState('500');
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
+  const [isDarkMode, setIsDarkMode] = useState(initialDarkMode || false);
 
   useEffect(() => {
     (async () => {
@@ -94,6 +95,12 @@ const HomeScreen = () => {
       // Load custom vibration duration
       const savedDuration = await getCustomVibrationDuration();
       setCustomVibrationDuration(savedDuration ? savedDuration.toString() : '500');
+      
+      // Load dark mode preference
+      const savedMode = await AsyncStorage.getItem('darkMode');
+      if (savedMode !== null) {
+        setIsDarkMode(savedMode === 'true');
+      }
 
       // Check if task is already running
       if (Platform.OS !== 'web') {
@@ -179,6 +186,15 @@ const HomeScreen = () => {
     }).start(() => {
       setSettingsModalVisible(false);
     });
+  };
+
+  const handleThemeToggle = async () => {
+    const newMode = !isDarkMode;
+    setIsDarkMode(newMode);
+    await AsyncStorage.setItem('darkMode', newMode.toString());
+    if (onThemeChange) {
+      onThemeChange(newMode);
+    }
   };
 
   const startTracking = async () => {
@@ -517,6 +533,23 @@ const HomeScreen = () => {
                   />
                 </>
               )}
+
+              <Divider style={{ marginVertical: 16 }} />
+
+              {/* Theme Mode Toggle */}
+              <View style={styles.modalSection}>
+                <View style={styles.themeToggleContainer}>
+                  <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                    {isDarkMode ? '🌙 Dark Mode' : '☀️ Light Mode'}
+                  </Text>
+                  <IconButton
+                    icon={isDarkMode ? "moon-waning-crescent" : "white-balance-sunny"}
+                    iconColor={isDarkMode ? '#FFD700' : '#FFA500'}
+                    size={28}
+                    onPress={handleThemeToggle}
+                  />
+                </View>
+              </View>
             </View>
           </Animated.View>
         </View>
@@ -641,6 +674,15 @@ const styles = StyleSheet.create({
   },
   modalSection: {
     marginBottom: 12,
+  },
+  themeToggleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    backgroundColor: '#f5f5f5',
   },
 });
 
