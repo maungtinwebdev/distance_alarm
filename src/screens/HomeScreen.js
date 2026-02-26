@@ -313,7 +313,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
           <MapView
             ref={mapRef}
             style={styles.map}
-            provider={PROVIDER_DEFAULT}
+            provider={Platform.OS === 'android' ? 'google' : 'apple'}
             initialRegion={{
               latitude: location.latitude,
               longitude: location.longitude,
