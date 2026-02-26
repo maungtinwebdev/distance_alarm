@@ -5,11 +5,12 @@ import MapView, { Marker, Circle, PROVIDER_DEFAULT } from '../components/MapComp
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { useKeepAwake } from 'expo-keep-awake';
-import { TextInput, Button, Text, Appbar, Surface, useTheme, FAB, Chip, SegmentedButtons, ActivityIndicator } from 'react-native-paper';
+import { TextInput, Button, Text, Appbar, Surface, useTheme, FAB, Chip, SegmentedButtons, ActivityIndicator, Menu, Divider } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDistance } from '../utils/location';
 import { LOCATION_TASK_NAME } from '../services/LocationTask';
+import { getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels } from '../services/SoundService';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -35,9 +36,15 @@ const HomeScreen = () => {
   const [radiusPreset, setRadiusPreset] = useState('500');
   const [isLoading, setIsLoading] = useState(false);
   const [locationUpdates, setLocationUpdates] = useState(0);
+  const [selectedSound, setSelectedSound] = useState('alarm');
+  const [availableSounds, setAvailableSounds] = useState([]);
+  const [soundMenuVisible, setSoundMenuVisible] = useState(false);
 
   useEffect(() => {
     (async () => {
+      // Setup notification channels
+      await setupNotificationChannels();
+
       let { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
       if (locationStatus !== 'granted') {
         Alert.alert('Permission to access location was denied');
@@ -65,6 +72,12 @@ const HomeScreen = () => {
 
       let currentLocation = await Location.getCurrentPositionAsync({});
       setLocation(currentLocation.coords);
+
+      // Load sound preference and available sounds
+      const saved = await getSoundPreference();
+      setSelectedSound(saved);
+      const sounds = getAvailableSounds();
+      setAvailableSounds(sounds);
 
       // Check if task is already running
       if (Platform.OS !== 'web') {
@@ -113,6 +126,12 @@ const HomeScreen = () => {
       }
     );
     setForegroundSub(sub);
+  };
+
+  const handleSoundChange = async (soundType) => {
+    setSelectedSound(soundType);
+    await setSoundPreference(soundType);
+    setSoundMenuVisible(false);
   };
 
   const startTracking = async () => {
@@ -212,6 +231,29 @@ const HomeScreen = () => {
           title="Distance Alarm" 
           subtitle={isTracking ? "• Tracking Active" : ""}
         />
+        <Menu
+          visible={soundMenuVisible}
+          onDismiss={() => setSoundMenuVisible(false)}
+          anchor={
+            <Button 
+              compact 
+              icon="volume-high"
+              onPress={() => setSoundMenuVisible(true)}
+              mode="text"
+            >
+              {selectedSound}
+            </Button>
+          }
+        >
+          {availableSounds.map((sound) => (
+            <Menu.Item 
+              key={sound.type}
+              onPress={() => handleSoundChange(sound.type)}
+              title={sound.name}
+              leadingIcon={selectedSound === sound.type ? "check" : undefined}
+            />
+          ))}
+        </Menu>
       </Appbar.Header>
 
       <View style={styles.mapContainer}>
@@ -280,6 +322,34 @@ const HomeScreen = () => {
             </View>
           </Surface>
         )}
+
+        {/* Sound Selection */}
+        <View style={styles.soundSection}>
+          <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>
+            🔔 Alarm Sound
+          </Text>
+          <View style={styles.soundChips}>
+            {availableSounds.map((sound) => (
+              <Chip
+                key={sound.type}
+                selected={selectedSound === sound.type}
+                onPress={() => handleSoundChange(sound.type)}
+                style={[
+                  styles.soundChip,
+                  selectedSound === sound.type && { backgroundColor: theme.colors.primary }
+                ]}
+                textStyle={{
+                  color: selectedSound === sound.type ? '#fff' : theme.colors.onSurface,
+                  fontSize: 12,
+                }}
+              >
+                {sound.name}
+              </Chip>
+            ))}
+          </View>
+        </View>
+
+        <Divider style={{ marginVertical: 12 }} />
 
         {/* Radius Preset Buttons */}
         <View style={styles.presetSection}>
@@ -377,6 +447,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginTop: 12,
+  },
+  soundSection: {
+    marginBottom: 12,
+  },
+  soundChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  soundChip: {
+    marginBottom: 8,
   },
   presetSection: {
     marginBottom: 16,

@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDistance } from '../utils/location';
-
+import { sendAlarmNotification, getSoundPreference } from './SoundService';
 import { Platform } from 'react-native';
 
 export const LOCATION_TASK_NAME = 'background-location-task';
@@ -39,16 +39,15 @@ if (Platform.OS !== 'web') {
           console.log(`Current distance: ${distance}m, Target: ${radius}m`);
 
           if (distance <= radius) {
-            // Trigger alarm
-            await Notifications.scheduleNotificationAsync({
-              content: {
-                title: "Arrived!",
-                body: `You are within ${Math.round(distance)}m of your destination!`,
-                sound: true,
-                priority: Notifications.AndroidNotificationPriority.HIGH,
-              },
-              trigger: null,
-            });
+            // Get user's preferred sound
+            const soundType = await getSoundPreference();
+            
+            // Trigger alarm with custom sound
+            await sendAlarmNotification(
+              "Arrived!",
+              `You are within ${Math.round(distance)}m of your destination!`,
+              soundType
+            );
 
             // Stop tracking to avoid spamming
             await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
