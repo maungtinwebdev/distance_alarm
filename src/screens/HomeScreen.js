@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView, Linking, Animated, Dimensions, Modal } from 'react-native';
+import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView, Linking, Animated, Dimensions, Modal, PanResponder } from 'react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from '../components/MapComponent';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
@@ -45,11 +45,102 @@ const HomeScreen = () => {
   const [customVibrationDuration, setCustomVibrationDuration] = useState('500');
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
+  const settingsPan = useRef(new Animated.ValueXY({ x: Dimensions.get('window').width - 70, y: Dimensions.get('window').height - 200 })).current;
+  const settingsScale = useRef(new Animated.Value(1)).current;
+  const panResponder = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     (async () => {
       // Setup notification channels
       await setupNotificationChannels();
+
+      // Setup pan responder for draggable settings icon
+      panResponder.current = PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: () => {
+          setIsDragging(true);
+          Animated.spring(settingsScale, {
+            toValue: 1.15,
+            useNativeDriver: true,
+          }).start();
+        },
+        onPanResponderMove: Animated.event(
+          [null, { dx: settingsPan.x, dy: settingsPan.y }],
+          { useNativeDriver: false }
+        ),
+        onPanResponderRelease: (evt, { dx, dy, vx, vy }) => {
+          setIsDragging(false);
+          const windowWidth = Dimensions.get('window').width;
+          const windowHeight = Dimensions.get('window').height;
+          const buttonSize = 64;
+          const padding = 16;
+          
+          // Get current position
+          let currentX = dx;
+          let currentY = dy;
+          
+          // Constrain to screen bounds
+          currentX = Math.max(padding, Math.min(currentX, windowWidth - buttonSize - padding));
+          currentY = Math.max(80, Math.min(currentY, windowHeight - buttonSize - padding));
+          
+          // Calculate snap positions (corners and edges)
+          const snapPositions = [
+            { x: padding, y: Math.max(80, currentY), label: 'left' },
+            { x: windowWidth - buttonSize - padding, y: Math.max(80, currentY), label: 'right' },
+            { x: Math.max(padding, Math.min(currentX, windowWidth - buttonSize - padding)), y: 80, label: 'top' },
+            { x: Math.max(padding, Math.min(currentX, windowWidth - buttonSize - padding)), y: windowHeight - buttonSize - padding, label: 'bottom' },
+            // Corners
+            { x: padding, y: 80, label: 'topLeft' },
+            { x: windowWidth - buttonSize - padding, y: 80, label: 'topRight' },
+            { x: padding, y: windowHeight - buttonSize - padding, label: 'bottomLeft' },
+            { x: windowWidth - buttonSize - padding, y: windowHeight - buttonSize - padding, label: 'bottomRight' },
+          ];
+          
+          // Find nearest snap position (with magnetic range of 60px)
+          const snapRange = 60;
+          let nearestSnap = { x: currentX, y: currentY, distance: Infinity };
+          
+          snapPositions.forEach((pos) => {
+            const distance = Math.sqrt(
+              Math.pow(pos.x - currentX, 2) + Math.pow(pos.y - currentY, 2)
+            );
+            if (distance < nearestSnap.distance && distance < snapRange) {
+              nearestSnap = { ...pos, distance };
+            }
+          });
+          
+          const finalX = nearestSnap.distance < snapRange ? nearestSnap.x : currentX;
+          const finalY = nearestSnap.distance < snapRange ? nearestSnap.y : currentY;
+          
+          // Add velocity for inertia
+          Animated.parallel([
+            Animated.spring(settingsPan.x, {
+              toValue: finalX,
+              velocity: vx * 2,
+              friction: 6,
+              useNativeDriver: false,
+            }),
+            Animated.spring(settingsPan.y, {
+              toValue: finalY,
+              velocity: vy * 2,
+              friction: 6,
+              useNativeDriver: false,
+            }),
+            Animated.spring(settingsScale, {
+              toValue: 1,
+              useNativeDriver: true,
+            }),
+          ]).start();
+
+          // Save position to storage
+          saveSettingsIconPosition(finalX, finalY);
+        },
+      });
+
+      // Load saved position
+      await loadSettingsIconPosition();
 
       let { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
       if (locationStatus !== 'granted') {
@@ -181,6 +272,19 @@ const HomeScreen = () => {
     });
   };
 
+  const saveSettingsIconPosition = async (x, y) => {
+    await AsyncStorage.setItem('settingsIconPosition', JSON.stringify({ x, y }));
+  };
+
+  const loadSettingsIconPosition = async () => {
+    const stored = await AsyncStorage.getItem('settingsIconPosition');
+    if (stored) {
+      const { x, y } = JSON.parse(stored);
+      settingsPan.x.setValue(x);
+      settingsPan.y.setValue(y);
+    }
+  };
+
   const startTracking = async () => {
     if (!destination) {
       Alert.alert('Select Destination', 'Please tap on the map to select a destination');
@@ -278,12 +382,37 @@ const HomeScreen = () => {
           title="Distance Alarm" 
           subtitle={isTracking ? "• Tracking Active" : ""}
         />
-        <IconButton 
-          icon="cog" 
-          onPress={openSettingsModal}
-          size={24}
-        />
       </Appbar.Header>
+
+      {/* Draggable Settings Button */}
+      <Animated.View
+        style={[
+          styles.draggableButton,
+          {
+            transform: [
+              { translateX: settingsPan.x },
+              { translateY: settingsPan.y },
+              { scale: settingsScale },
+            ],
+          },
+        ]}
+        {...panResponder.current?.panHandlers}
+      >
+        <Surface 
+          style={[
+            styles.settingsButtonSurface,
+            isDragging && { elevation: 12 }
+          ]} 
+          elevation={isDragging ? 12 : 6}
+        >
+          <IconButton
+            icon="cog"
+            iconColor={theme.colors.primary}
+            size={28}
+            onPress={openSettingsModal}
+          />
+        </Surface>
+      </Animated.View>
 
       <View style={styles.mapContainer}>
         {location && (
@@ -634,6 +763,29 @@ const styles = StyleSheet.create({
   },
   modalSection: {
     marginBottom: 12,
+  },
+  draggableButton: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: 10,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsButtonSurface: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
   },
 });
 
