@@ -10,6 +10,14 @@ export const SOUND_TYPES = {
   SIREN: 'siren',
 };
 
+export const VIBRATION_PATTERNS = {
+  LIGHT: { name: 'Light', pattern: [0, 200] },
+  MEDIUM: { name: 'Medium', pattern: [0, 400, 200, 400] },
+  HEAVY: { name: 'Heavy', pattern: [0, 600, 300, 600] },
+  INTENSE: { name: 'Intense', pattern: [0, 500, 100, 500, 100, 500] },
+  CUSTOM: { name: 'Custom', pattern: null },
+};
+
 // Sound configuration for each type
 const SOUND_CONFIG = {
   [SOUND_TYPES.BELL]: {
@@ -50,6 +58,36 @@ export const setSoundPreference = async (soundType) => {
   await AsyncStorage.setItem('alarmSound', soundType);
 };
 
+// Get stored vibration preference
+export const getVibrationPreference = async () => {
+  const stored = await AsyncStorage.getItem('vibrationPattern');
+  return stored || 'MEDIUM';
+};
+
+// Save vibration preference
+export const setVibrationPreference = async (pattern) => {
+  await AsyncStorage.setItem('vibrationPattern', pattern);
+};
+
+// Get custom vibration duration
+export const getCustomVibrationDuration = async () => {
+  const stored = await AsyncStorage.getItem('customVibrationDuration');
+  return stored ? parseInt(stored) : 500;
+};
+
+// Save custom vibration duration
+export const setCustomVibrationDuration = async (duration) => {
+  await AsyncStorage.setItem('customVibrationDuration', duration.toString());
+};
+
+// Get vibration pattern array
+export const getVibrationArray = (patternKey, customDuration = 500) => {
+  if (patternKey === 'CUSTOM') {
+    return [0, customDuration];
+  }
+  return VIBRATION_PATTERNS[patternKey]?.pattern || VIBRATION_PATTERNS.MEDIUM.pattern;
+};
+
 // Get all available sounds
 export const getAvailableSounds = () => {
   return Object.entries(SOUND_CONFIG).map(([key, config]) => ({
@@ -58,34 +96,36 @@ export const getAvailableSounds = () => {
   }));
 };
 
-// Send alarm notification with custom sound
-export const sendAlarmNotification = async (title, body, soundType = SOUND_TYPES.ALARM) => {
+// Get all vibration patterns
+export const getAvailableVibrations = () => {
+  return Object.entries(VIBRATION_PATTERNS).map(([key, config]) => ({
+    type: key,
+    name: config.name,
+  }));
+};
+
+// Send alarm notification with custom sound and vibration
+export const sendAlarmNotification = async (title, body, soundType = SOUND_TYPES.ALARM, vibrationPattern = 'MEDIUM', customDuration = 500) => {
   try {
     const config = SOUND_CONFIG[soundType];
+    const vibrationArray = getVibrationArray(vibrationPattern, customDuration);
     
     await Notifications.scheduleNotificationAsync({
       content: {
         title: title,
         body: body,
-        sound: config.androidId,
+        sound: 'default',
         priority: Notifications.AndroidNotificationPriority.MAX,
-        vibrate: [0, 500, 250, 500],
-        // iOS specific
-        ios: {
-          sound: config.iosSound,
-          badge: 1,
-          launchImageName: 'LaunchScreen',
-        },
-        // Android specific
+        vibrate: vibrationArray,
         android: {
-          sound: config.androidId,
+          sound: 'default',
           channelId: 'alarm_channel',
-          vibrate: true,
+          vibrate: vibrationArray,
           priority: 'high',
           smallIcon: 'ic_launcher',
         },
       },
-      trigger: null, // Send immediately
+      trigger: null,
     });
   } catch (error) {
     console.error('Error sending notification:', error);
@@ -122,9 +162,16 @@ export const setupNotificationChannels = async () => {
 
 export default {
   SOUND_TYPES,
+  VIBRATION_PATTERNS,
   getSoundPreference,
   setSoundPreference,
+  getVibrationPreference,
+  setVibrationPreference,
+  getCustomVibrationDuration,
+  setCustomVibrationDuration,
   getAvailableSounds,
+  getAvailableVibrations,
+  getVibrationArray,
   sendAlarmNotification,
   setupNotificationChannels,
 };

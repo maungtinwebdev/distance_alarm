@@ -1,16 +1,16 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView, Linking, Animated, Dimensions } from 'react-native';
+import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView, Linking, Animated, Dimensions, Modal } from 'react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from '../components/MapComponent';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { useKeepAwake } from 'expo-keep-awake';
-import { TextInput, Button, Text, Appbar, Surface, useTheme, FAB, Chip, SegmentedButtons, ActivityIndicator, Menu, Divider } from 'react-native-paper';
+import { TextInput, Button, Text, Appbar, Surface, useTheme, FAB, Chip, SegmentedButtons, ActivityIndicator, Menu, Divider, IconButton } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDistance } from '../utils/location';
 import { LOCATION_TASK_NAME } from '../services/LocationTask';
-import { getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels } from '../services/SoundService';
+import { getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration } from '../services/SoundService';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -39,6 +39,12 @@ const HomeScreen = () => {
   const [selectedSound, setSelectedSound] = useState('alarm');
   const [availableSounds, setAvailableSounds] = useState([]);
   const [soundMenuVisible, setSoundMenuVisible] = useState(false);
+  const [selectedVibration, setSelectedVibration] = useState('MEDIUM');
+  const [availableVibrations, setAvailableVibrations] = useState([]);
+  const [vibrationMenuVisible, setVibrationMenuVisible] = useState(false);
+  const [customVibrationDuration, setCustomVibrationDuration] = useState('500');
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
 
   useEffect(() => {
     (async () => {
@@ -78,6 +84,16 @@ const HomeScreen = () => {
       setSelectedSound(saved);
       const sounds = getAvailableSounds();
       setAvailableSounds(sounds);
+      
+      // Load vibration preference and available vibrations
+      const savedVibration = await getVibrationPreference();
+      setSelectedVibration(savedVibration);
+      const vibrations = getAvailableVibrations();
+      setAvailableVibrations(vibrations);
+      
+      // Load custom vibration duration
+      const savedDuration = await getCustomVibrationDuration();
+      setCustomVibrationDuration(savedDuration.toString());
 
       // Check if task is already running
       if (Platform.OS !== 'web') {
@@ -132,6 +148,37 @@ const HomeScreen = () => {
     setSelectedSound(soundType);
     await setSoundPreference(soundType);
     setSoundMenuVisible(false);
+  };
+
+  const handleVibrationChange = async (vibrationPattern) => {
+    setSelectedVibration(vibrationPattern);
+    await setVibrationPreference(vibrationPattern);
+    setVibrationMenuVisible(false);
+  };
+
+  const handleCustomVibrationChange = async (duration) => {
+    setCustomVibrationDuration(duration);
+    const numDuration = parseInt(duration) || 500;
+    await setCustomVibrationDuration(numDuration);
+  };
+
+  const openSettingsModal = () => {
+    setSettingsModalVisible(true);
+    Animated.timing(slideAnim, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const closeSettingsModal = () => {
+    Animated.timing(slideAnim, {
+      toValue: Dimensions.get('window').height,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      setSettingsModalVisible(false);
+    });
   };
 
   const startTracking = async () => {
@@ -231,29 +278,11 @@ const HomeScreen = () => {
           title="Distance Alarm" 
           subtitle={isTracking ? "• Tracking Active" : ""}
         />
-        <Menu
-          visible={soundMenuVisible}
-          onDismiss={() => setSoundMenuVisible(false)}
-          anchor={
-            <Button 
-              compact 
-              icon="volume-high"
-              onPress={() => setSoundMenuVisible(true)}
-              mode="text"
-            >
-              {selectedSound}
-            </Button>
-          }
-        >
-          {availableSounds.map((sound) => (
-            <Menu.Item 
-              key={sound.type}
-              onPress={() => handleSoundChange(sound.type)}
-              title={sound.name}
-              leadingIcon={selectedSound === sound.type ? "check" : undefined}
-            />
-          ))}
-        </Menu>
+        <IconButton 
+          icon="cog" 
+          onPress={openSettingsModal}
+          size={24}
+        />
       </Appbar.Header>
 
       <View style={styles.mapContainer}>
@@ -323,34 +352,6 @@ const HomeScreen = () => {
           </Surface>
         )}
 
-        {/* Sound Selection */}
-        <View style={styles.soundSection}>
-          <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>
-            🔔 Alarm Sound
-          </Text>
-          <View style={styles.soundChips}>
-            {availableSounds.map((sound) => (
-              <Chip
-                key={sound.type}
-                selected={selectedSound === sound.type}
-                onPress={() => handleSoundChange(sound.type)}
-                style={[
-                  styles.soundChip,
-                  selectedSound === sound.type && { backgroundColor: theme.colors.primary }
-                ]}
-                textStyle={{
-                  color: selectedSound === sound.type ? '#fff' : theme.colors.onSurface,
-                  fontSize: 12,
-                }}
-              >
-                {sound.name}
-              </Chip>
-            ))}
-          </View>
-        </View>
-
-        <Divider style={{ marginVertical: 12 }} />
-
         {/* Radius Preset Buttons */}
         <View style={styles.presetSection}>
           <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>
@@ -410,6 +411,109 @@ const HomeScreen = () => {
           </View>
         )}
       </Surface>
+
+      {/* Settings Modal */}
+      <Modal
+        visible={settingsModalVisible}
+        transparent={true}
+        animationType="none"
+        onRequestClose={closeSettingsModal}
+      >
+        <View style={styles.modalOverlay}>
+          <Animated.View
+            style={[
+              styles.modalContent,
+              {
+                transform: [{ translateY: slideAnim }],
+              },
+            ]}
+          >
+            <Surface style={styles.modalHeader} elevation={4}>
+              <View style={styles.modalHeaderContent}>
+                <Text variant="headlineSmall" style={{ fontWeight: 'bold' }}>
+                  Alarm Settings
+                </Text>
+                <IconButton
+                  icon="close"
+                  onPress={closeSettingsModal}
+                />
+              </View>
+            </Surface>
+
+            <View style={styles.modalBody}>
+              {/* Sound Selection */}
+              <View style={styles.modalSection}>
+                <Text variant="labelMedium" style={{ marginBottom: 12, color: theme.colors.onSurfaceVariant }}>
+                  🔔 Alarm Sound
+                </Text>
+                <View style={styles.soundChips}>
+                  {availableSounds.map((sound) => (
+                    <Chip
+                      key={sound.type}
+                      selected={selectedSound === sound.type}
+                      onPress={() => handleSoundChange(sound.type)}
+                      style={[
+                        styles.soundChip,
+                        selectedSound === sound.type && { backgroundColor: theme.colors.primary }
+                      ]}
+                      textStyle={{
+                        color: selectedSound === sound.type ? '#fff' : theme.colors.onSurface,
+                        fontSize: 12,
+                      }}
+                    >
+                      {sound.name}
+                    </Chip>
+                  ))}
+                </View>
+              </View>
+
+              <Divider style={{ marginVertical: 16 }} />
+
+              {/* Vibration Selection */}
+              <View style={styles.modalSection}>
+                <Text variant="labelMedium" style={{ marginBottom: 12, color: theme.colors.onSurfaceVariant }}>
+                  📳 Vibration Pattern
+                </Text>
+                <View style={styles.vibrationChips}>
+                  {availableVibrations.map((vib) => (
+                    <Chip
+                      key={vib.type}
+                      selected={selectedVibration === vib.type}
+                      onPress={() => handleVibrationChange(vib.type)}
+                      style={[
+                        styles.vibrationChip,
+                        selectedVibration === vib.type && { backgroundColor: theme.colors.primary }
+                      ]}
+                      textStyle={{
+                        color: selectedVibration === vib.type ? '#fff' : theme.colors.onSurface,
+                        fontSize: 12,
+                      }}
+                    >
+                      {vib.name}
+                    </Chip>
+                  ))}
+                </View>
+              </View>
+
+              {/* Custom Vibration Duration */}
+              {selectedVibration === 'CUSTOM' && (
+                <>
+                  <Divider style={{ marginVertical: 16 }} />
+                  <TextInput
+                    mode="outlined"
+                    label="Custom Duration (ms)"
+                    value={customVibrationDuration}
+                    onChangeText={handleCustomVibrationChange}
+                    keyboardType="numeric"
+                    style={styles.input}
+                    left={<TextInput.Icon icon="timer" />}
+                  />
+                </>
+              )}
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -459,6 +563,17 @@ const styles = StyleSheet.create({
   soundChip: {
     marginBottom: 8,
   },
+  vibrationSection: {
+    marginBottom: 12,
+  },
+  vibrationChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  vibrationChip: {
+    marginBottom: 8,
+  },
   presetSection: {
     marginBottom: 16,
   },
@@ -485,6 +600,40 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '90%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  modalHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
+  modalHeaderContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  modalBody: {
+    padding: 16,
+  },
+  modalSection: {
+    marginBottom: 12,
   },
 });
 
