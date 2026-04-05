@@ -11,57 +11,58 @@ if (Platform.OS !== 'web' && !isExpoGo) {
   const Location = require('expo-location');
 
   TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
-  if (error) {
-    console.error(error);
-    return;
-  }
-  if (data) {
-    const { locations } = data;
-    const location = locations[0]; // Get the latest location
+    if (error) {
+      console.error(error);
+      return;
+    }
+    if (data) {
+      const { locations } = data;
+      const location = locations[0]; // Get the latest location
 
-    if (location) {
-      try {
-        const storedTarget = await AsyncStorage.getItem('targetLocation');
-        const storedRadius = await AsyncStorage.getItem('alarmRadius');
-        const isTracking = await AsyncStorage.getItem('isTracking');
+      if (location) {
+        try {
+          const storedTarget = await AsyncStorage.getItem('targetLocation');
+          const storedRadius = await AsyncStorage.getItem('alarmRadius');
+          const isTracking = await AsyncStorage.getItem('isTracking');
 
-        if (isTracking === 'true' && storedTarget && storedRadius) {
-          const target = JSON.parse(storedTarget);
-          const radius = parseFloat(storedRadius);
+          if (isTracking === 'true' && storedTarget && storedRadius) {
+            const target = JSON.parse(storedTarget);
+            const radius = parseFloat(storedRadius);
 
-          const distance = getDistance(
-            location.coords.latitude,
-            location.coords.longitude,
-            target.latitude,
-            target.longitude
-          );
-
-          console.log(`Current distance: ${distance}m, Target: ${radius}m`);
-
-          if (distance <= radius) {
-            // Get user's preferences
-            const soundType = await getSoundPreference();
-            const vibrationPattern = await getVibrationPreference();
-            const customDuration = await getCustomVibrationDuration();
-            
-            // Trigger alarm with custom sound and vibration
-            await sendAlarmNotification(
-              "Arrived!",
-              `You are within ${Math.round(distance)}m of your destination!`,
-              soundType,
-              vibrationPattern,
-              customDuration
+            const distance = getDistance(
+              location.coords.latitude,
+              location.coords.longitude,
+              target.latitude,
+              target.longitude
             );
 
-            // Stop tracking to avoid spamming
-            await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-            await AsyncStorage.setItem('isTracking', 'false');
+            console.log(`Current distance: ${distance}m, Target: ${radius}m`);
+
+            if (distance <= radius) {
+              // Get user's preferences
+              const soundType = await getSoundPreference();
+              const vibrationPattern = await getVibrationPreference();
+              const customDuration = await getCustomVibrationDuration();
+
+              // Trigger alarm with custom sound and vibration
+              await sendAlarmNotification(
+                "Arrived!",
+                `You are within ${Math.round(distance)}m of your destination! Tap here to stop the alarm.`,
+                soundType,
+                vibrationPattern,
+                customDuration
+              );
+
+
+              // Stop tracking to avoid spamming
+              await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+              await AsyncStorage.setItem('isTracking', 'false');
+            }
           }
+        } catch (err) {
+          console.error('Error in background task:', err);
         }
-      } catch (err) {
-        console.error('Error in background task:', err);
       }
     }
-  }
-});
+  });
 }

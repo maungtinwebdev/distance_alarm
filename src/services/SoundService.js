@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 import { isExpoGo } from '../utils/runtime';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
 export const SOUND_TYPES = {
   BELL: 'bell',
@@ -8,6 +9,7 @@ export const SOUND_TYPES = {
   CHIME: 'chime',
   BEEP: 'beep',
   SIREN: 'siren',
+  SONG: 'song',
 };
 
 export const VIBRATION_PATTERNS = {
@@ -45,7 +47,64 @@ const SOUND_CONFIG = {
     iosSound: 'notification_siren.wav',
     androidId: 'siren',
   },
+  [SOUND_TYPES.SONG]: {
+    name: 'Song (Music)',
+    iosSound: 'default',
+    androidId: 'song',
+  },
 };
+
+let alarmSoundPlayer = null;
+
+export const playAlarmSong = async () => {
+  try {
+    await stopAlarmSong();
+
+    // Start continuous looping hardware vibration (works everywhere)
+    Vibration.vibrate([0, 500, 200, 500, 200], true);
+
+    // expo-audio native module in Expo Go doesn't match the JS version,
+    // so only use audio playback in development/production builds.
+    if (!isExpoGo) {
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+        interruptionMode: 'doNotMix',
+      });
+
+      alarmSoundPlayer = createAudioPlayer('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-14.mp3');
+      alarmSoundPlayer.loop = true;
+      alarmSoundPlayer.volume = 1.0;
+      alarmSoundPlayer.play();
+    }
+  } catch (error) {
+    console.error('Error playing alarm song:', error);
+  }
+};
+
+export const stopAlarmSong = async () => {
+  Vibration.cancel();
+
+  const Notifications = getNotificationsModule();
+  if (Notifications) {
+    try {
+      await Notifications.cancelAllScheduledNotificationsAsync();
+    } catch (e) {
+      console.error('Error cancelling notifications:', e);
+    }
+  }
+
+  if (alarmSoundPlayer) {
+    try {
+      alarmSoundPlayer.pause();
+      alarmSoundPlayer.release();
+      alarmSoundPlayer = null;
+    } catch (error) {
+      console.error('Error stopping alarm song:', error);
+    }
+  }
+};
+
 
 const getNotificationsModule = () => {
   if (isExpoGo) {
@@ -98,18 +157,18 @@ export const getVibrationArray = (patternKey, customDuration = 500) => {
   if (patternKey === 'CUSTOM') {
     return [0, customDuration];
   }
-  
+
   const basePattern = VIBRATION_PATTERNS[patternKey]?.pattern || VIBRATION_PATTERNS.MEDIUM.pattern;
-  
+
   if (!basePattern || basePattern.length === 0) {
     return [0, 300];
   }
-  
+
   // For LIGHT patterns, repeat 2 times
   if (patternKey === 'LIGHT') {
     return [...basePattern, 100, ...basePattern];
   }
-  
+
   // For other patterns, use as-is (they're already long)
   return basePattern;
 };
@@ -133,6 +192,10 @@ export const getAvailableVibrations = () => {
 // Send alarm notification with custom sound and vibration
 export const sendAlarmNotification = async (title, body, soundType = SOUND_TYPES.ALARM, vibrationPattern = 'MEDIUM', customDuration = 500) => {
   try {
+    if (soundType === SOUND_TYPES.SONG) {
+      await playAlarmSong();
+    }
+
     const Notifications = getNotificationsModule();
     if (!Notifications) {
       return false;
@@ -140,19 +203,21 @@ export const sendAlarmNotification = async (title, body, soundType = SOUND_TYPES
 
     const soundConfig = SOUND_CONFIG[soundType] || SOUND_CONFIG[SOUND_TYPES.ALARM];
     const vibrationArray = getVibrationArray(vibrationPattern, customDuration);
-    
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title: title,
         body: body,
         data: { soundType: soundConfig.androidId },
         sound: 'default',
+        categoryIdentifier: 'alarm',
         priority: Notifications.AndroidNotificationPriority.MAX,
         vibrate: vibrationArray,
         ios: {
           sound: true,
           badge: 1,
           vibrate: true,
+          categoryIdentifier: 'alarm',
         },
         android: {
           sound: 'default',
@@ -210,6 +275,17 @@ export const setupNotificationChannels = async () => {
         showBadge: true,
       });
 
+      // Define notification category with "Stop" action
+      await Notifications.setNotificationCategoryAsync('alarm', [
+        {
+          identifier: 'STOP_ALARM',
+          buttonTitle: 'Stop Alarm',
+          options: {
+            opensAppToForeground: false,
+          },
+        },
+      ]);
+
       // Create default channel
       await Notifications.setNotificationChannelAsync('default', {
         name: 'Default Notifications',
@@ -237,4 +313,6 @@ export default {
   configureNotificationHandler,
   sendAlarmNotification,
   setupNotificationChannels,
+  playAlarmSong,
+  stopAlarmSong,
 };

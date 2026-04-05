@@ -3,13 +3,14 @@ import { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, Alert, Platform, Linking, Animated, Dimensions, Modal } from 'react-native';
 import MapView from '../components/MapComponent';
 import * as Location from 'expo-location';
+
 import { useKeepAwake } from 'expo-keep-awake';
 import { TextInput, Button, Text, Appbar, Surface, useTheme, Chip, Divider, IconButton } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDistance } from '../utils/location';
 import { LOCATION_TASK_NAME } from '../services/LocationTask';
-import { configureNotificationHandler, getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration as saveCustomVibrationDuration } from '../services/SoundService';
+import { configureNotificationHandler, getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration as saveCustomVibrationDuration, playAlarmSong, stopAlarmSong, SOUND_TYPES } from '../services/SoundService';
 import { isExpoGo } from '../utils/runtime';
 
 const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
@@ -19,6 +20,10 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   const mapRef = useRef(null);
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const arrivalHandledRef = useRef(false);
+  const foregroundSubRef = useRef(null);
+  const destinationRef = useRef(null);
+  const alarmRadiusRef = useRef('500');
+  const selectedSoundRef = useRef('alarm');
   const supportsBackgroundTracking = Platform.OS !== 'web' && !isExpoGo;
 
   const [location, setLocation] = useState(null);
@@ -51,18 +56,18 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         Alert.alert('Permission to access location was denied');
         return;
       }
-      
+
       if (supportsBackgroundTracking) {
         let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
         if (bgStatus !== 'granted') {
-           Alert.alert(
-             'Background Location Required',
-             'This app needs background location access to trigger the alarm when the app is closed. Please select "Allow all the time" in settings.',
-             [
-               { text: 'Cancel', style: 'cancel' },
-               { text: 'Open Settings', onPress: () => Linking.openSettings() }
-             ]
-           );
+          Alert.alert(
+            'Background Location Required',
+            'This app needs background location access to trigger the alarm when the app is closed. Please select "Allow all the time" in settings.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => Linking.openSettings() }
+            ]
+          );
         }
       }
 
@@ -87,17 +92,17 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       setSelectedSound(saved);
       const sounds = getAvailableSounds();
       setAvailableSounds(sounds);
-      
+
       // Load vibration preference and available vibrations
       const savedVibration = await getVibrationPreference();
       setSelectedVibration(savedVibration);
       const vibrations = getAvailableVibrations();
       setAvailableVibrations(vibrations);
-      
+
       // Load custom vibration duration
       const savedDuration = await getCustomVibrationDuration();
       setCustomVibrationDuration(savedDuration ? savedDuration.toString() : '500');
-      
+
       // Load dark mode preference
       const savedMode = await AsyncStorage.getItem('darkMode');
       if (savedMode !== null) {
@@ -108,7 +113,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       if (supportsBackgroundTracking) {
         const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
         setIsTracking(hasStarted);
-        
+
         if (hasStarted) {
           // Restore state if tracking
           const storedTarget = await AsyncStorage.getItem('targetLocation');
@@ -116,19 +121,47 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
           if (storedTarget) setDestination(JSON.parse(storedTarget));
           if (storedRadius) setAlarmRadius(storedRadius);
           startForegroundTracking();
+        } else {
+          // Check if alarm triggered in background and stopped tracking
+          const isTrackingStored = await AsyncStorage.getItem('isTracking');
+          const storedTarget = await AsyncStorage.getItem('targetLocation');
+          if (isTrackingStored === 'false' && storedTarget) {
+            setDestination(JSON.parse(storedTarget));
+            Alert.alert(
+              'Arrived!',
+              'You have reached your destination!',
+              [{ text: 'Stop Alarm', onPress: () => { stopTracking(); } }]
+            );
+          }
         }
       }
     })();
-    
+
+    // Listen for user tapping the background notification
+    let notificationSub = null;
+    if (!isExpoGo) {
+      const Notifications = require('expo-notifications');
+      notificationSub = Notifications.addNotificationResponseReceivedListener(response => {
+        // User tapped the "Arrived" notification, stop the alarm and reset
+        stopTracking();
+      });
+    }
+
     return () => {
-       if (foregroundSub) foregroundSub.remove();
+      if (foregroundSub) foregroundSub.remove();
+      if (notificationSub) notificationSub.remove();
     }
   }, []);
+
+  // Keep refs in sync with state so location callback always has current values
+  useEffect(() => { destinationRef.current = destination; }, [destination]);
+  useEffect(() => { alarmRadiusRef.current = alarmRadius; }, [alarmRadius]);
+  useEffect(() => { selectedSoundRef.current = selectedSound; }, [selectedSound]);
 
   // Effect to update distance calculation for UI when tracking
   useEffect(() => {
     if (location && destination) {
-       const dist = getDistance(
+      const dist = getDistance(
         location.latitude,
         location.longitude,
         destination.latitude,
@@ -149,22 +182,32 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         setLocation(newLocation.coords);
         setLocationUpdates(prev => prev + 1);
 
-        if (!supportsBackgroundTracking && destination && !arrivalHandledRef.current) {
+        // Use refs so the callback always reads the latest values
+        const dest = destinationRef.current;
+        if (!supportsBackgroundTracking && dest && !arrivalHandledRef.current) {
           const distance = getDistance(
             newLocation.coords.latitude,
             newLocation.coords.longitude,
-            destination.latitude,
-            destination.longitude
+            dest.latitude,
+            dest.longitude
           );
 
-          if (distance <= (parseFloat(alarmRadius) || 0)) {
+          if (distance <= (parseFloat(alarmRadiusRef.current) || 0)) {
             arrivalHandledRef.current = true;
-            Alert.alert('Arrived!', `You are within ${Math.round(distance)}m of your destination.`);
-            stopTracking();
+            if (selectedSoundRef.current === SOUND_TYPES.SONG) {
+              playAlarmSong();
+            }
+            Alert.alert(
+              'Arrived!',
+              `You are within ${Math.round(distance)}m of your destination.`,
+              [{ text: 'Stop Alarm', onPress: () => { stopTracking(); } }],
+              { cancelable: false }
+            );
           }
         }
       }
     );
+    foregroundSubRef.current = sub;
     setForegroundSub(sub);
   };
 
@@ -232,7 +275,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       await AsyncStorage.setItem('targetLocation', JSON.stringify(destination));
       await AsyncStorage.setItem('alarmRadius', alarmRadius);
       await AsyncStorage.setItem('isTracking', 'true');
-      
+
       // Save sound and vibration preferences
       await setSoundPreference(selectedSound);
       await setVibrationPreference(selectedVibration);
@@ -257,9 +300,9 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
 
       // Start foreground tracking for UI
       await startForegroundTracking();
-      
+
       setIsTracking(true);
-      
+
       // Animate button
       Animated.sequence([
         Animated.timing(scaleAnim, {
@@ -273,7 +316,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
           useNativeDriver: true,
         }),
       ]).start();
-      
+
       Alert.alert(
         'Alarm Active',
         supportsBackgroundTracking
@@ -289,25 +332,57 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   };
 
   const stopTracking = async () => {
+    // Immediately mark arrival as handled to prevent re-triggers
+    arrivalHandledRef.current = true;
+    // Clear destination ref so no callback can re-check
+    destinationRef.current = null;
+
     try {
+      // 1. Stop alarm sound & vibration FIRST
+      await stopAlarmSong();
+
+      // 2. Stop foreground location watcher BEFORE anything else
+      // Use the ref to guarantee we have the current subscription
+      if (foregroundSubRef.current) {
+        foregroundSubRef.current.remove();
+        foregroundSubRef.current = null;
+        setForegroundSub(null);
+      }
+
+      // 3. Stop background location task
       if (supportsBackgroundTracking) {
         const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
         if (hasStarted) {
           await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
         }
       }
-      
-      if (foregroundSub) {
-        foregroundSub.remove();
-        setForegroundSub(null);
+
+      // 4. Clear all persisted alarm data
+      await AsyncStorage.multiRemove([
+        'isTracking',
+        'targetLocation',
+        'alarmRadius',
+      ]);
+
+      // 5. Cancel any remaining notifications
+      if (!isExpoGo) {
+        try {
+          const Notifications = require('expo-notifications');
+          await Notifications.dismissAllNotificationsAsync();
+          await Notifications.cancelAllScheduledNotificationsAsync();
+        } catch (e) {
+          // Ignore notification errors
+        }
       }
-      
-      await AsyncStorage.setItem('isTracking', 'false');
-      arrivalHandledRef.current = false;
+
+      // 6. Reset all UI state (do NOT reset arrivalHandledRef here)
       setIsTracking(false);
+      setIsLoading(false);
       setDistanceToDest(null);
+      setDestination(null);
+      setLocationUpdates(0);
     } catch (e) {
-      console.error(e);
+      console.error('Error stopping tracking:', e);
     }
   };
 
@@ -320,12 +395,12 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   return (
     <View style={styles.container}>
       <Appbar.Header elevated style={{ backgroundColor: theme.colors.surface }}>
-        <Appbar.Content 
-          title="Distance Alarm" 
+        <Appbar.Content
+          title="Distance Alarm"
           subtitle={isTracking ? "• Tracking Active" : ""}
         />
-        <IconButton 
-          icon="cog" 
+        <IconButton
+          icon="cog"
           onPress={openSettingsModal}
           size={24}
         />
@@ -363,8 +438,8 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
                 <Text variant="headlineSmall" style={{ color: theme.colors.primary, marginLeft: 8, marginTop: 4 }}>m</Text>
               </View>
               {distanceToDest <= parseFloat(alarmRadius) && (
-                <Chip 
-                  icon="check-circle" 
+                <Chip
+                  icon="check-circle"
                   style={{ backgroundColor: '#4CAF50', marginTop: 8 }}
                   textStyle={{ color: '#fff' }}
                 >
