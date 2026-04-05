@@ -1,15 +1,15 @@
-
-import * as TaskManager from 'expo-task-manager';
-import * as Location from 'expo-location';
-import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDistance } from '../utils/location';
 import { sendAlarmNotification, getSoundPreference, getVibrationPreference, getCustomVibrationDuration } from './SoundService';
 import { Platform } from 'react-native';
+import { isExpoGo } from '../utils/runtime';
 
 export const LOCATION_TASK_NAME = 'background-location-task';
 
-if (Platform.OS !== 'web') {
+if (Platform.OS !== 'web' && !isExpoGo) {
+  const TaskManager = require('expo-task-manager');
+  const Location = require('expo-location');
+
   TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
     console.error(error);

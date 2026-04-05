@@ -1,24 +1,16 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Alert, Platform, KeyboardAvoidingView, Linking, Animated, Dimensions, Modal } from 'react-native';
-import MapView, { Marker, Circle, PROVIDER_DEFAULT } from '../components/MapComponent';
+import { useState, useEffect, useRef } from 'react';
+import { StyleSheet, View, Alert, Platform, Linking, Animated, Dimensions, Modal } from 'react-native';
+import MapView from '../components/MapComponent';
 import * as Location from 'expo-location';
-import * as Notifications from 'expo-notifications';
 import { useKeepAwake } from 'expo-keep-awake';
-import { TextInput, Button, Text, Appbar, Surface, useTheme, FAB, Chip, SegmentedButtons, ActivityIndicator, Menu, Divider, IconButton, MD3LightTheme, MD3DarkTheme, Provider as PaperProvider } from 'react-native-paper';
+import { TextInput, Button, Text, Appbar, Surface, useTheme, Chip, Divider, IconButton } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDistance } from '../utils/location';
 import { LOCATION_TASK_NAME } from '../services/LocationTask';
-import { getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration as saveCustomVibrationDuration } from '../services/SoundService';
-
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+import { configureNotificationHandler, getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration as saveCustomVibrationDuration } from '../services/SoundService';
+import { isExpoGo } from '../utils/runtime';
 
 const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   useKeepAwake();
@@ -26,6 +18,8 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   const insets = useSafeAreaInsets();
   const mapRef = useRef(null);
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  const arrivalHandledRef = useRef(false);
+  const supportsBackgroundTracking = Platform.OS !== 'web' && !isExpoGo;
 
   const [location, setLocation] = useState(null);
   const [destination, setDestination] = useState(null);
@@ -38,10 +32,8 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   const [locationUpdates, setLocationUpdates] = useState(0);
   const [selectedSound, setSelectedSound] = useState('alarm');
   const [availableSounds, setAvailableSounds] = useState([]);
-  const [soundMenuVisible, setSoundMenuVisible] = useState(false);
   const [selectedVibration, setSelectedVibration] = useState('MEDIUM');
   const [availableVibrations, setAvailableVibrations] = useState([]);
-  const [vibrationMenuVisible, setVibrationMenuVisible] = useState(false);
   const [customVibrationDuration, setCustomVibrationDuration] = useState('500');
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
@@ -49,8 +41,10 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
 
   useEffect(() => {
     (async () => {
-      // Setup notification channels
-      await setupNotificationChannels();
+      if (!isExpoGo) {
+        configureNotificationHandler();
+        await setupNotificationChannels();
+      }
 
       let { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
       if (locationStatus !== 'granted') {
@@ -58,7 +52,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         return;
       }
       
-      if (Platform.OS !== 'web') {
+      if (supportsBackgroundTracking) {
         let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
         if (bgStatus !== 'granted') {
            Alert.alert(
@@ -72,9 +66,17 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         }
       }
 
-      let { status: notificationStatus } = await Notifications.requestPermissionsAsync();
-      if (notificationStatus !== 'granted') {
-        Alert.alert('Permission to send notifications was denied');
+      if (!isExpoGo) {
+        const Notifications = require('expo-notifications');
+        let { status: notificationStatus } = await Notifications.requestPermissionsAsync();
+        if (notificationStatus !== 'granted') {
+          Alert.alert('Permission to send notifications was denied');
+        }
+      } else {
+        Alert.alert(
+          'Expo Go Limitation',
+          'Notifications and background location are not fully supported in Expo Go. The alarm will only work while the app stays open. Use a development build for full behavior.'
+        );
       }
 
       let currentLocation = await Location.getCurrentPositionAsync({});
@@ -103,7 +105,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       }
 
       // Check if task is already running
-      if (Platform.OS !== 'web') {
+      if (supportsBackgroundTracking) {
         const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
         setIsTracking(hasStarted);
         
@@ -133,7 +135,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         destination.longitude
       );
       setDistanceToDest(dist);
-    }
+    };
   }, [location, destination]);
 
   const startForegroundTracking = async () => {
@@ -146,6 +148,21 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       (newLocation) => {
         setLocation(newLocation.coords);
         setLocationUpdates(prev => prev + 1);
+
+        if (!supportsBackgroundTracking && destination && !arrivalHandledRef.current) {
+          const distance = getDistance(
+            newLocation.coords.latitude,
+            newLocation.coords.longitude,
+            destination.latitude,
+            destination.longitude
+          );
+
+          if (distance <= (parseFloat(alarmRadius) || 0)) {
+            arrivalHandledRef.current = true;
+            Alert.alert('Arrived!', `You are within ${Math.round(distance)}m of your destination.`);
+            stopTracking();
+          }
+        }
       }
     );
     setForegroundSub(sub);
@@ -154,13 +171,11 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   const handleSoundChange = async (soundType) => {
     setSelectedSound(soundType);
     await setSoundPreference(soundType);
-    setSoundMenuVisible(false);
   };
 
   const handleVibrationChange = async (vibrationPattern) => {
     setSelectedVibration(vibrationPattern);
     await setVibrationPreference(vibrationPattern);
-    setVibrationMenuVisible(false);
   };
 
   const handleCustomVibrationChange = async (duration) => {
@@ -211,6 +226,8 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
 
     setIsLoading(true);
     try {
+      arrivalHandledRef.current = false;
+
       // Save state for background task
       await AsyncStorage.setItem('targetLocation', JSON.stringify(destination));
       await AsyncStorage.setItem('alarmRadius', alarmRadius);
@@ -224,7 +241,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       }
 
       // Start background task
-      if (Platform.OS !== 'web') {
+      if (supportsBackgroundTracking) {
         await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
           accuracy: Location.Accuracy.Balanced,
           timeInterval: 5000,
@@ -257,7 +274,12 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         }),
       ]).start();
       
-      Alert.alert('Alarm Active', 'You will be notified when you reach your destination');
+      Alert.alert(
+        'Alarm Active',
+        supportsBackgroundTracking
+          ? 'You will be notified when you reach your destination.'
+          : 'Foreground-only tracking started. Keep the app open in Expo Go to receive the arrival alert.'
+      );
     } catch (e) {
       console.error(e);
       Alert.alert('Error', 'Failed to start tracking: ' + e.message);
@@ -268,7 +290,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
 
   const stopTracking = async () => {
     try {
-      if (Platform.OS !== 'web') {
+      if (supportsBackgroundTracking) {
         const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
         if (hasStarted) {
           await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
@@ -281,6 +303,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       }
       
       await AsyncStorage.setItem('isTracking', 'false');
+      arrivalHandledRef.current = false;
       setIsTracking(false);
       setDistanceToDest(null);
     } catch (e) {
@@ -313,29 +336,17 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
           <MapView
             ref={mapRef}
             style={styles.map}
-            provider={Platform.OS === 'android' ? 'google' : 'apple'}
             initialRegion={{
               latitude: location.latitude,
               longitude: location.longitude,
               latitudeDelta: 0.0922,
               longitudeDelta: 0.0421,
             }}
-            showsUserLocation={true}
+            currentLocation={location}
+            destination={destination}
+            alarmRadius={parseFloat(alarmRadius) || 0}
             onPress={handleMapPress}
-          >
-            {destination && (
-              <>
-                <Marker coordinate={destination} title="Destination" pinColor="red" />
-                <Circle
-                  center={destination}
-                  radius={parseFloat(alarmRadius) || 0}
-                  strokeColor="rgba(220, 53, 69, 0.8)"
-                  fillColor="rgba(220, 53, 69, 0.15)"
-                  strokeWidth={2}
-                />
-              </>
-            )}
-          </MapView>
+          />
         )}
       </View>
 

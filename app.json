@@ -39,8 +39,7 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
       ],
-      "edgeToEdgeEnabled": true,
-      "googleMapsApiKey": "AIzaSyDuQRjpIJ5j7Xvv7m8rJR3p7Xvv7m8rJR3"
+      "edgeToEdgeEnabled": true
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -59,12 +58,6 @@
           "color": "#ffffff"
         }
       ]
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "42255355-12b8-42a9-baec-bcf62690a183"
-      }
-    },
-    "owner": "bruno18farnandes"
+    ]
   }
 }

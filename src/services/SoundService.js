@@ -1,6 +1,6 @@
-import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import { isExpoGo } from '../utils/runtime';
 
 export const SOUND_TYPES = {
   BELL: 'bell',
@@ -45,6 +45,19 @@ const SOUND_CONFIG = {
     iosSound: 'notification_siren.wav',
     androidId: 'siren',
   },
+};
+
+const getNotificationsModule = () => {
+  if (isExpoGo) {
+    return null;
+  }
+
+  try {
+    return require('expo-notifications');
+  } catch (error) {
+    console.error('Error loading notifications module:', error);
+    return null;
+  }
 };
 
 // Get stored sound preference
@@ -120,13 +133,19 @@ export const getAvailableVibrations = () => {
 // Send alarm notification with custom sound and vibration
 export const sendAlarmNotification = async (title, body, soundType = SOUND_TYPES.ALARM, vibrationPattern = 'MEDIUM', customDuration = 500) => {
   try {
-    const config = SOUND_CONFIG[soundType];
+    const Notifications = getNotificationsModule();
+    if (!Notifications) {
+      return false;
+    }
+
+    const soundConfig = SOUND_CONFIG[soundType] || SOUND_CONFIG[SOUND_TYPES.ALARM];
     const vibrationArray = getVibrationArray(vibrationPattern, customDuration);
     
     await Notifications.scheduleNotificationAsync({
       content: {
         title: title,
         body: body,
+        data: { soundType: soundConfig.androidId },
         sound: 'default',
         priority: Notifications.AndroidNotificationPriority.MAX,
         vibrate: vibrationArray,
@@ -146,15 +165,38 @@ export const sendAlarmNotification = async (title, body, soundType = SOUND_TYPES
       },
       trigger: null,
     });
+    return true;
   } catch (error) {
     console.error('Error sending notification:', error);
+    return false;
   }
+};
+
+export const configureNotificationHandler = () => {
+  const Notifications = getNotificationsModule();
+
+  if (!Notifications) {
+    return;
+  }
+
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
 };
 
 // Setup notification channels for Android
 export const setupNotificationChannels = async () => {
   if (Platform.OS === 'android') {
     try {
+      const Notifications = getNotificationsModule();
+      if (!Notifications) {
+        return;
+      }
+
       // Create alarm channel with high priority and default vibration pattern
       await Notifications.setNotificationChannelAsync('alarm_channel', {
         name: 'Alarm Notifications',
@@ -192,6 +234,7 @@ export default {
   getAvailableSounds,
   getAvailableVibrations,
   getVibrationArray,
+  configureNotificationHandler,
   sendAlarmNotification,
   setupNotificationChannels,
 };
