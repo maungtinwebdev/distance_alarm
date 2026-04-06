@@ -1,0 +1,1 @@
+Write to fix when display off user phone and place his pocket, when long distance arrive selected loaction but not notify

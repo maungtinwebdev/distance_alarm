@@ -386,12 +386,13 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         await saveCustomVibrationDuration(parseInt(customVibrationDuration) || 500);
       }
 
-      // Start background task
       if (supportsBackgroundTracking) {
         await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-          accuracy: Location.Accuracy.Balanced,
+          accuracy: Location.Accuracy.Highest,
           timeInterval: 5000,
           distanceInterval: 10,
+          pausesUpdatesAutomatically: false,
+          activityType: Location.ActivityType.OtherNavigation,
           showsBackgroundLocationIndicator: true,
           foregroundService: {
             notificationTitle: "Distance Alarm Active",
