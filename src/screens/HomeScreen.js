@@ -1,17 +1,18 @@
 
-import { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Alert, Platform, Linking, Animated, Dimensions, Modal } from 'react-native';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { StyleSheet, View, Alert, Platform, Linking, Animated, Dimensions, Modal, ScrollView, FlatList, TouchableOpacity } from 'react-native';
 import MapView from '../components/MapComponent';
 import * as Location from 'expo-location';
 
 import { useKeepAwake } from 'expo-keep-awake';
-import { TextInput, Button, Text, Appbar, Surface, useTheme, Chip, Divider, IconButton } from 'react-native-paper';
+import { TextInput, Button, Text, Appbar, Surface, useTheme, Chip, Divider, IconButton, ActivityIndicator } from 'react-native-paper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getDistance } from '../utils/location';
 import { LOCATION_TASK_NAME } from '../services/LocationTask';
-import { configureNotificationHandler, getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration as saveCustomVibrationDuration, playAlarmSong, stopAlarmSong, SOUND_TYPES } from '../services/SoundService';
+import { configureNotificationHandler, getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration as saveCustomVibrationDuration, playAlarmSong, stopAlarmSong, SOUND_TYPES, sendAlarmNotification } from '../services/SoundService';
 import { isExpoGo } from '../utils/runtime';
+import { getNearestAndNextStop, searchBusStopByName, resetBusStopCache } from '../services/BusStopService';
 
 const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   useKeepAwake();
@@ -43,6 +44,20 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const slideAnim = useRef(new Animated.Value(Dimensions.get('window').height)).current;
   const [isDarkMode, setIsDarkMode] = useState(initialDarkMode || false);
+
+  // --- Feature 1: Auto-detect bus stops ---
+  const [nearestStop, setNearestStop] = useState(null);
+  const [nextStop, setNextStop] = useState(null);
+  const [busStopAutoDetect, setBusStopAutoDetect] = useState(true);
+  const lastNotifiedStopRef = useRef(null);
+  const BUS_STOP_NOTIFY_RADIUS = 150; // notify when within 150m of a bus stop
+
+  // --- Feature 2: Search bus stop by name ---
+  const [busStopSearch, setBusStopSearch] = useState('');
+  const [busStopResults, setBusStopResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedBusStop, setSelectedBusStop] = useState(null);
+  const searchTimeoutRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -171,6 +186,86 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
     };
   }, [location, destination]);
 
+  // --- Feature 1: Auto-detect nearby bus stops on each location update ---
+  useEffect(() => {
+    if (!location || !isTracking || !busStopAutoDetect) return;
+
+    const detectBusStops = async () => {
+      try {
+        const { nearest, next } = await getNearestAndNextStop(
+          location.latitude,
+          location.longitude
+        );
+
+        setNearestStop(nearest);
+        setNextStop(next);
+
+        // Auto-notify when within BUS_STOP_NOTIFY_RADIUS of a bus stop
+        if (nearest && nearest.distance <= BUS_STOP_NOTIFY_RADIUS) {
+          // Only notify once per stop (avoid spamming)
+          if (lastNotifiedStopRef.current !== nearest.id) {
+            lastNotifiedStopRef.current = nearest.id;
+
+            const nearName = nearest.name;
+            const nextName = next ? next.name : 'N/A';
+
+            // Send notification (works in background builds)
+            const soundType = await getSoundPreference();
+            const vibrationPattern = await getVibrationPreference();
+            const customDuration = await getCustomVibrationDuration();
+            await sendAlarmNotification(
+              'Bus Stop Nearby',
+              `- near the bus stop is ${nearName}\n- next bus stop is ${nextName}`,
+              soundType,
+              vibrationPattern,
+              customDuration
+            );
+
+            // Also show in-app alert
+            Alert.alert(
+              '🚏 Bus Stop Nearby',
+              `- near the bus stop is ${nearName}\n- next bus stop is ${nextName}`,
+              [{ text: 'OK' }]
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('Bus stop auto-detect error:', err);
+      }
+    };
+
+    detectBusStops();
+  }, [location, isTracking, busStopAutoDetect]);
+
+  // --- Feature 2: Bus stop search with debounce ---
+  const handleBusStopSearch = useCallback((text) => {
+    setBusStopSearch(text);
+    setBusStopResults([]);
+
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    if (text.trim().length < 2) {
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    searchTimeoutRef.current = setTimeout(async () => {
+      const results = await searchBusStopByName(text);
+      setBusStopResults(results);
+      setIsSearching(false);
+    }, 800);
+  }, []);
+
+  const handleSelectSearchResult = (stop) => {
+    setSelectedBusStop(stop);
+    setDestination({ latitude: stop.lat, longitude: stop.lon });
+    setBusStopSearch(stop.name);
+    setBusStopResults([]);
+  };
+
   const startForegroundTracking = async () => {
     const sub = await Location.watchPositionAsync(
       {
@@ -197,9 +292,17 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
             if (selectedSoundRef.current === SOUND_TYPES.SONG) {
               playAlarmSong();
             }
+
+            const title = selectedBusStop
+              ? `🚏 Near ${selectedBusStop.name}!`
+              : 'Arrived!';
+            const body = selectedBusStop
+              ? `You are within ${Math.round(distance)}m of ${selectedBusStop.name} bus stop.`
+              : `You are within ${Math.round(distance)}m of your destination.`;
+
             Alert.alert(
-              'Arrived!',
-              `You are within ${Math.round(distance)}m of your destination.`,
+              title,
+              body,
               [{ text: 'Stop Alarm', onPress: () => { stopTracking(); } }],
               { cancelable: false }
             );
@@ -381,6 +484,15 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       setDistanceToDest(null);
       setDestination(null);
       setLocationUpdates(0);
+
+      // 7. Reset bus stop state
+      setNearestStop(null);
+      setNextStop(null);
+      setSelectedBusStop(null);
+      setBusStopSearch('');
+      setBusStopResults([]);
+      lastNotifiedStopRef.current = null;
+      resetBusStopCache();
     } catch (e) {
       console.error('Error stopping tracking:', e);
     }
@@ -426,99 +538,178 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       </View>
 
       <Surface style={[styles.controlsPanel, { paddingBottom: Math.max(16, insets.bottom) }]} elevation={8}>
-        {/* Status Card */}
-        {isTracking && distanceToDest !== null && (
-          <Surface style={[styles.statusCard, { backgroundColor: theme.colors.primaryContainer }]} elevation={2}>
-            <View style={styles.statusContent}>
-              <Text variant="labelSmall" style={{ color: theme.colors.primary }}>DISTANCE TO DESTINATION</Text>
-              <View style={styles.distanceRow}>
-                <Text variant="displaySmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
-                  {Math.round(distanceToDest)}
+        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+
+          {/* === Feature 1: Live Bus Stop Info (auto-detected, no user input) === */}
+          {isTracking && nearestStop && (
+            <Surface style={[styles.busStopCard, { backgroundColor: '#1B5E20' }]} elevation={3}>
+              <View style={styles.statusContent}>
+                <Text variant="labelSmall" style={{ color: '#A5D6A7' }}>🚏 AUTO-DETECTED BUS STOPS</Text>
+                <Text variant="bodyLarge" style={{ color: '#fff', marginTop: 8, fontWeight: 'bold' }}>
+                  - near the bus stop is {nearestStop.name}
                 </Text>
-                <Text variant="headlineSmall" style={{ color: theme.colors.primary, marginLeft: 8, marginTop: 4 }}>m</Text>
-              </View>
-              {distanceToDest <= parseFloat(alarmRadius) && (
+                <Text variant="bodyLarge" style={{ color: '#C8E6C9', marginTop: 4 }}>
+                  - next bus stop is {nextStop ? nextStop.name : 'N/A'}
+                </Text>
                 <Chip
-                  icon="check-circle"
-                  style={{ backgroundColor: '#4CAF50', marginTop: 8 }}
-                  textStyle={{ color: '#fff' }}
+                  icon="map-marker-distance"
+                  style={{ backgroundColor: '#2E7D32', marginTop: 10, alignSelf: 'flex-start' }}
+                  textStyle={{ color: '#fff', fontSize: 12 }}
                 >
-                  Within Alarm Zone
+                  {Math.round(nearestStop.distance)}m away
                 </Chip>
+              </View>
+            </Surface>
+          )}
+
+          {/* Status Card */}
+          {isTracking && distanceToDest !== null && (
+            <Surface style={[styles.statusCard, { backgroundColor: theme.colors.primaryContainer }]} elevation={2}>
+              <View style={styles.statusContent}>
+                <Text variant="labelSmall" style={{ color: theme.colors.primary }}>DISTANCE TO DESTINATION</Text>
+                <View style={styles.distanceRow}>
+                  <Text variant="displaySmall" style={{ color: theme.colors.primary, fontWeight: 'bold' }}>
+                    {Math.round(distanceToDest)}
+                  </Text>
+                  <Text variant="headlineSmall" style={{ color: theme.colors.primary, marginLeft: 8, marginTop: 4 }}>m</Text>
+                </View>
+                {selectedBusStop && (
+                  <Text variant="bodySmall" style={{ color: theme.colors.primary, marginTop: 4 }}>
+                    🚏 {selectedBusStop.name}
+                  </Text>
+                )}
+                {distanceToDest <= parseFloat(alarmRadius) && (
+                  <Chip
+                    icon="check-circle"
+                    style={{ backgroundColor: '#4CAF50', marginTop: 8 }}
+                    textStyle={{ color: '#fff' }}
+                  >
+                    Within Alarm Zone
+                  </Chip>
+                )}
+              </View>
+            </Surface>
+          )}
+
+          {!isTracking && destination && (
+            <Surface style={[styles.statusCard, { backgroundColor: theme.colors.inverseOnSurface }]} elevation={2}>
+              <View style={styles.statusContent}>
+                <Text variant="labelSmall">SELECTED DESTINATION</Text>
+                {selectedBusStop ? (
+                  <Text variant="bodyMedium" style={{ marginTop: 8, fontWeight: 'bold' }}>
+                    🚏 {selectedBusStop.name}
+                  </Text>
+                ) : null}
+                <Text variant="bodyMedium" style={{ marginTop: 4 }}>
+                  {destination.latitude.toFixed(4)}°, {destination.longitude.toFixed(4)}°
+                </Text>
+              </View>
+            </Surface>
+          )}
+
+          {/* === Feature 2: Search Bus Stop by Name === */}
+          {!isTracking && (
+            <View style={styles.busSearchSection}>
+              <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>
+                🔍 Search Bus Stop
+              </Text>
+              <TextInput
+                mode="outlined"
+                label="Bus stop name"
+                value={busStopSearch}
+                onChangeText={handleBusStopSearch}
+                placeholder="e.g. Sule, Hledan..."
+                style={styles.input}
+                left={<TextInput.Icon icon="bus-stop" />}
+                right={isSearching ? <TextInput.Icon icon={() => <ActivityIndicator size={18} />} /> : null}
+              />
+              {busStopResults.length > 0 && (
+                <Surface style={styles.searchResults} elevation={3}>
+                  <ScrollView
+                    keyboardShouldPersistTaps="handled"
+                    style={{ maxHeight: 180 }}
+                  >
+                    {busStopResults.map((item, index) => (
+                      <View key={`${item.lat}-${item.lon}-${index}`}>
+                        <TouchableOpacity
+                          style={styles.searchResultItem}
+                          onPress={() => handleSelectSearchResult(item)}
+                        >
+                          <Text variant="bodyMedium" style={{ fontWeight: 'bold' }} numberOfLines={1}>
+                            🚏 {item.name}
+                          </Text>
+                          <Text variant="bodySmall" style={{ color: theme.colors.outline, marginTop: 2 }} numberOfLines={1}>
+                            {item.displayName}
+                          </Text>
+                        </TouchableOpacity>
+                        {index < busStopResults.length - 1 && <Divider />}
+                      </View>
+                    ))}
+                  </ScrollView>
+                </Surface>
               )}
             </View>
-          </Surface>
-        )}
+          )}
 
-        {!isTracking && destination && (
-          <Surface style={[styles.statusCard, { backgroundColor: theme.colors.inverseOnSurface }]} elevation={2}>
-            <View style={styles.statusContent}>
-              <Text variant="labelSmall">SELECTED DESTINATION</Text>
-              <Text variant="bodyMedium" style={{ marginTop: 8 }}>
-                {destination.latitude.toFixed(4)}°, {destination.longitude.toFixed(4)}°
+          {/* Radius Preset Buttons */}
+          <View style={styles.presetSection}>
+            <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>
+              Quick Presets
+            </Text>
+            <View style={styles.presetButtons}>
+              {['100', '500', '1000', '5000'].map((preset) => (
+                <Button
+                  key={preset}
+                  mode={radiusPreset === preset ? 'contained' : 'outlined'}
+                  compact
+                  onPress={() => {
+                    setRadiusPreset(preset);
+                    setAlarmRadius(preset);
+                  }}
+                  style={styles.presetButton}
+                >
+                  {preset}m
+                </Button>
+              ))}
+            </View>
+          </View>
+
+          {/* Custom Radius Input */}
+          <TextInput
+            mode="outlined"
+            label="Custom Radius (meters)"
+            value={alarmRadius}
+            onChangeText={(text) => {
+              setAlarmRadius(text);
+              setRadiusPreset('');
+            }}
+            keyboardType="numeric"
+            style={styles.input}
+            disabled={isTracking}
+            left={<TextInput.Icon icon="ruler" />}
+          />
+
+          {/* Main Action Button */}
+          <Button
+            mode="contained"
+            onPress={isTracking ? stopTracking : startTracking}
+            style={[styles.mainButton, { marginTop: 16 }]}
+            buttonColor={isTracking ? theme.colors.error : theme.colors.primary}
+            loading={isLoading}
+            disabled={isLoading || !location}
+            labelStyle={{ fontSize: 16, fontWeight: 'bold' }}
+          >
+            {isLoading ? 'Processing...' : isTracking ? '● Stop Tracking' : '◆ Start Alarm'}
+          </Button>
+
+          {isTracking && (
+            <View style={styles.infoFooter}>
+              <Text variant="labelSmall" style={{ color: theme.colors.outline, textAlign: 'center' }}>
+                GPS updates: {locationUpdates}
               </Text>
             </View>
-          </Surface>
-        )}
-
-        {/* Radius Preset Buttons */}
-        <View style={styles.presetSection}>
-          <Text variant="labelMedium" style={{ marginBottom: 8, color: theme.colors.onSurfaceVariant }}>
-            Quick Presets
-          </Text>
-          <View style={styles.presetButtons}>
-            {['100', '500', '1000', '5000'].map((preset) => (
-              <Button
-                key={preset}
-                mode={radiusPreset === preset ? 'contained' : 'outlined'}
-                compact
-                onPress={() => {
-                  setRadiusPreset(preset);
-                  setAlarmRadius(preset);
-                }}
-                style={styles.presetButton}
-              >
-                {preset}m
-              </Button>
-            ))}
-          </View>
-        </View>
-
-        {/* Custom Radius Input */}
-        <TextInput
-          mode="outlined"
-          label="Custom Radius (meters)"
-          value={alarmRadius}
-          onChangeText={(text) => {
-            setAlarmRadius(text);
-            setRadiusPreset('');
-          }}
-          keyboardType="numeric"
-          style={styles.input}
-          disabled={isTracking}
-          left={<TextInput.Icon icon="ruler" />}
-        />
-
-        {/* Main Action Button */}
-        <Button
-          mode="contained"
-          onPress={isTracking ? stopTracking : startTracking}
-          style={[styles.mainButton, { marginTop: 16 }]}
-          buttonColor={isTracking ? theme.colors.error : theme.colors.primary}
-          loading={isLoading}
-          disabled={isLoading || !location}
-          labelStyle={{ fontSize: 16, fontWeight: 'bold' }}
-        >
-          {isLoading ? 'Processing...' : isTracking ? '● Stop Tracking' : '◆ Start Alarm'}
-        </Button>
-
-        {isTracking && (
-          <View style={styles.infoFooter}>
-            <Text variant="labelSmall" style={{ color: theme.colors.outline, textAlign: 'center' }}>
-              GPS updates: {locationUpdates}
-            </Text>
-          </View>
-        )}
+          )}
+        </ScrollView>
       </Surface>
 
       {/* Settings Modal */}
@@ -662,6 +853,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+    maxHeight: '55%',
   },
   statusCard: {
     padding: 16,
@@ -669,6 +861,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderLeftWidth: 4,
     borderLeftColor: '#dc3545',
+  },
+  busStopCard: {
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CAF50',
   },
   statusContent: {
     paddingVertical: 8,
@@ -726,6 +925,18 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+  },
+  busSearchSection: {
+    marginBottom: 16,
+  },
+  searchResults: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  searchResultItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
   modalOverlay: {
     flex: 1,
