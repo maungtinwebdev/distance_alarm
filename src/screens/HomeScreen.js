@@ -12,7 +12,7 @@ import { getDistance } from '../utils/location';
 import { LOCATION_TASK_NAME } from '../services/LocationTask';
 import { configureNotificationHandler, getAvailableSounds, getSoundPreference, setSoundPreference, setupNotificationChannels, getAvailableVibrations, getVibrationPreference, setVibrationPreference, getCustomVibrationDuration, setCustomVibrationDuration as saveCustomVibrationDuration, playAlarmSong, stopAlarmSong, SOUND_TYPES, sendAlarmNotification } from '../services/SoundService';
 import { isExpoGo } from '../utils/runtime';
-import { getNearestAndNextStop, searchBusStopByName, resetBusStopCache } from '../services/BusStopService';
+import { getNearestAndNextStop, searchBusStopByName, resetBusStopCache, fetchNearbyBusStops } from '../services/BusStopService';
 
 const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   useKeepAwake();
@@ -49,8 +49,8 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   const [nearestStop, setNearestStop] = useState(null);
   const [nextStop, setNextStop] = useState(null);
   const [busStopAutoDetect, setBusStopAutoDetect] = useState(true);
-  const lastNotifiedStopRef = useRef(null);
-  const BUS_STOP_NOTIFY_RADIUS = 150; // notify when within 150m of a bus stop
+  const notifiedStopsRef = useRef(new Set());
+  const [busStopNotifyRadius, setBusStopNotifyRadius] = useState('150');
 
   // --- Feature 2: Search bus stop by name ---
   const [busStopSearch, setBusStopSearch] = useState('');
@@ -124,6 +124,11 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         setIsDarkMode(savedMode === 'true');
       }
 
+      const savedNotifyRadius = await AsyncStorage.getItem('busStopNotifyRadius');
+      if (savedNotifyRadius !== null) {
+        setBusStopNotifyRadius(savedNotifyRadius);
+      }
+
       // Check if task is already running
       if (supportsBackgroundTracking) {
         const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
@@ -192,41 +197,32 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
 
     const detectBusStops = async () => {
       try {
-        const { nearest, next } = await getNearestAndNextStop(
-          location.latitude,
-          location.longitude
-        );
+        const radius = parseFloat(busStopNotifyRadius) || 150;
+        // Search slightly wider to ensure we don't miss stops as we move
+        const searchRadius = Math.max(radius * 2, 800);
+        const stops = await fetchNearbyBusStops(location.latitude, location.longitude, searchRadius);
 
-        setNearestStop(nearest);
-        setNextStop(next);
+        if (stops && stops.length > 0) {
+          setNearestStop(stops[0]);
+          setNextStop(stops.length > 1 ? stops[1] : null);
 
-        // Auto-notify when within BUS_STOP_NOTIFY_RADIUS of a bus stop
-        if (nearest && nearest.distance <= BUS_STOP_NOTIFY_RADIUS) {
-          // Only notify once per stop (avoid spamming)
-          if (lastNotifiedStopRef.current !== nearest.id) {
-            lastNotifiedStopRef.current = nearest.id;
+          // Find ALL stops within custom radius
+          const stopsInRadius = stops.filter(s => s.distance <= radius);
 
-            const nearName = nearest.name;
-            const nextName = next ? next.name : 'N/A';
+          for (const stop of stopsInRadius) {
+            // Only notify once per stop tracking session
+            if (!notifiedStopsRef.current.has(stop.id)) {
+              notifiedStopsRef.current.add(stop.id);
 
-            // Send notification (works in background builds)
-            const soundType = await getSoundPreference();
-            const vibrationPattern = await getVibrationPreference();
-            const customDuration = await getCustomVibrationDuration();
-            await sendAlarmNotification(
-              'Bus Stop Nearby',
-              `- near the bus stop is ${nearName}\n- next bus stop is ${nextName}`,
-              soundType,
-              vibrationPattern,
-              customDuration
-            );
-
-            // Also show in-app alert
-            Alert.alert(
-              '🚏 Bus Stop Nearby',
-              `- near the bus stop is ${nearName}\n- next bus stop is ${nextName}`,
-              [{ text: 'OK' }]
-            );
+              // Send system notification ONLY (no Alert.alert as per instructions)
+              // We use a default/chime sound to avoid triggering the "Alarm Song" logic
+              await sendAlarmNotification(
+                '🚏 Bus Stop Nearby',
+                `You are near ${stop.name} (${Math.round(stop.distance)}m)`,
+                SOUND_TYPES.CHIME,
+                'MEDIUM'
+              );
+            }
           }
         }
       } catch (err) {
@@ -235,7 +231,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
     };
 
     detectBusStops();
-  }, [location, isTracking, busStopAutoDetect]);
+  }, [location, isTracking, busStopAutoDetect, busStopNotifyRadius]);
 
   // --- Feature 2: Bus stop search with debounce ---
   const handleBusStopSearch = useCallback((text) => {
@@ -492,7 +488,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       setSelectedBusStop(null);
       setBusStopSearch('');
       setBusStopResults([]);
-      lastNotifiedStopRef.current = null;
+      notifiedStopsRef.current.clear();
       resetBusStopCache();
     } catch (e) {
       console.error('Error stopping tracking:', e);
@@ -799,6 +795,25 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
                     </Chip>
                   ))}
                 </View>
+              </View>
+
+              <Divider style={{ marginVertical: 16 }} />
+
+              {/* Bus Stop Notify Radius */}
+              <View style={styles.modalSection}>
+                <Text variant="labelMedium" style={{ marginBottom: 12, color: theme.colors.onSurfaceVariant }}>
+                  🚏 Bus Stop Notify Radius (meters)
+                </Text>
+                <TextInput
+                  mode="outlined"
+                  value={String(busStopNotifyRadius)}
+                  onChangeText={(text) => {
+                    setBusStopNotifyRadius(text);
+                    AsyncStorage.setItem('busStopNotifyRadius', text);
+                  }}
+                  keyboardType="numeric"
+                  left={<TextInput.Icon icon="ruler" />}
+                />
               </View>
 
               {/* Custom Vibration Duration */}
