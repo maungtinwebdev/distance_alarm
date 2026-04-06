@@ -603,6 +603,11 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
                 <Text variant="bodyMedium" style={{ marginTop: 4 }}>
                   {destination.latitude.toFixed(4)}°, {destination.longitude.toFixed(4)}°
                 </Text>
+                {distanceToDest !== null && (
+                  <Chip icon="map-marker-distance" style={{ marginTop: 12, backgroundColor: theme.colors.surfaceVariant }} compact>
+                    Distance: {distanceToDest > 1000 ? (distanceToDest / 1000).toFixed(2) + ' km' : Math.round(distanceToDest) + ' m'}
+                  </Chip>
+                )}
               </View>
             </Surface>
           )}
