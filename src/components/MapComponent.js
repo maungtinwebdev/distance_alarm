@@ -38,6 +38,106 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
       body {
         background: #e9eef3;
       }
+
+      /* Hide Leaflet attribution text to save space, keep logo */
+      .leaflet-control-attribution {
+        font-size: 9px !important;
+        background: rgba(255,255,255,0.7) !important;
+        backdrop-filter: blur(4px);
+        border-radius: 4px 0 0 0;
+        padding: 2px 6px !important;
+      }
+
+      .leaflet-control-zoom {
+        border: none !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+        border-radius: 10px !important;
+        overflow: hidden;
+      }
+
+      .leaflet-control-zoom a {
+        background: rgba(255,255,255,0.92) !important;
+        backdrop-filter: blur(8px);
+        color: #333 !important;
+        border-bottom: 1px solid rgba(0,0,0,0.08) !important;
+        width: 36px !important;
+        height: 36px !important;
+        line-height: 36px !important;
+        font-size: 18px !important;
+      }
+
+      .leaflet-control-zoom a:last-child {
+        border-bottom: none !important;
+      }
+
+      .leaflet-control-zoom a:hover {
+        background: rgba(255,255,255,1) !important;
+      }
+
+      /* Pulse ring for current user location */
+      @keyframes pulseRing {
+        0%   { transform: scale(1);   opacity: 0.5; }
+        100% { transform: scale(2.5); opacity: 0; }
+      }
+
+      .user-pulse {
+        width: 24px;
+        height: 24px;
+        position: relative;
+      }
+
+      .user-pulse::before {
+        content: '';
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        background: rgba(43, 138, 255, 0.35);
+        animation: pulseRing 2s ease-out infinite;
+      }
+
+      .user-dot {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #2B8AFF;
+        border: 2.5px solid #fff;
+        box-shadow: 0 1px 6px rgba(43, 138, 255, 0.5);
+      }
+
+      .dest-marker {
+        width: 20px;
+        height: 20px;
+        position: relative;
+      }
+
+      .dest-dot {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #E53935;
+        border: 2.5px solid #fff;
+        box-shadow: 0 1px 6px rgba(229, 57, 53, 0.5);
+      }
+
+      .dest-ring {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: rgba(229, 57, 53, 0.15);
+      }
     </style>
   </head>
   <body>
@@ -74,9 +174,11 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
           attributionControl: true,
         }).setView(fallbackCenter, 15);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // Use CartoDB Positron for a cleaner, more modern look
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
           maxZoom: 19,
-          attribution: '&copy; OpenStreetMap contributors',
+          attribution: '\\u00a9 <a href="https://www.openstreetmap.org/copyright">OSM</a> \\u00a9 <a href="https://carto.com/attributions">CARTO</a>',
+          subdomains: 'abcd',
         }).addTo(state.map);
 
         state.map.on('click', function (event) {
@@ -90,50 +192,52 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
         updateMap(config);
       }
 
-      function setMarker(markerRef, coords, options) {
-        if (!coords) {
-          if (markerRef.current) {
-            state.map.removeLayer(markerRef.current);
-            markerRef.current = null;
-          }
-          return;
-        }
-
-        if (!markerRef.current) {
-          markerRef.current = L.circleMarker([coords.latitude, coords.longitude], options).addTo(state.map);
-        } else {
-          markerRef.current.setLatLng([coords.latitude, coords.longitude]);
-          markerRef.current.setStyle(options);
-        }
-      }
-
       function updateMap(config) {
         if (!state.map) {
           return;
         }
 
-        const userMarkerRef = { current: state.userMarker };
-        const destinationMarkerRef = { current: state.destinationMarker };
+        // ── User marker with pulse ──
+        if (config.currentLocation) {
+          const latlng = [config.currentLocation.latitude, config.currentLocation.longitude];
 
-        setMarker(userMarkerRef, config.currentLocation, {
-          radius: 8,
-          color: '#1f7ef0',
-          fillColor: '#1f7ef0',
-          fillOpacity: 1,
-          weight: 2,
-        });
+          if (!state.userMarker) {
+            const icon = L.divIcon({
+              className: 'user-pulse',
+              html: '<div class="user-dot"></div>',
+              iconSize: [24, 24],
+              iconAnchor: [12, 12],
+            });
+            state.userMarker = L.marker(latlng, { icon: icon, zIndexOffset: 1000 }).addTo(state.map);
+          } else {
+            state.userMarker.setLatLng(latlng);
+          }
+        } else if (state.userMarker) {
+          state.map.removeLayer(state.userMarker);
+          state.userMarker = null;
+        }
 
-        setMarker(destinationMarkerRef, config.destination, {
-          radius: 8,
-          color: '#dc3545',
-          fillColor: '#dc3545',
-          fillOpacity: 1,
-          weight: 2,
-        });
+        // ── Destination marker ──
+        if (config.destination) {
+          const latlng = [config.destination.latitude, config.destination.longitude];
 
-        state.userMarker = userMarkerRef.current;
-        state.destinationMarker = destinationMarkerRef.current;
+          if (!state.destinationMarker) {
+            const icon = L.divIcon({
+              className: 'dest-marker',
+              html: '<div class="dest-ring"></div><div class="dest-dot"></div>',
+              iconSize: [20, 20],
+              iconAnchor: [10, 10],
+            });
+            state.destinationMarker = L.marker(latlng, { icon: icon, zIndexOffset: 900 }).addTo(state.map);
+          } else {
+            state.destinationMarker.setLatLng(latlng);
+          }
+        } else if (state.destinationMarker) {
+          state.map.removeLayer(state.destinationMarker);
+          state.destinationMarker = null;
+        }
 
+        // ── Alarm radius circle ──
         if (state.alarmCircle) {
           state.map.removeLayer(state.alarmCircle);
           state.alarmCircle = null;
@@ -144,14 +248,16 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
             [config.destination.latitude, config.destination.longitude],
             {
               radius: config.alarmRadius,
-              color: 'rgba(220, 53, 69, 0.8)',
-              fillColor: 'rgba(220, 53, 69, 0.15)',
-              fillOpacity: 0.4,
+              color: 'rgba(43, 138, 255, 0.6)',
+              fillColor: 'rgba(43, 138, 255, 0.08)',
+              fillOpacity: 0.5,
               weight: 2,
+              dashArray: '6, 4',
             }
           ).addTo(state.map);
         }
 
+        // ── Initial bounds ──
         if (!state.initialViewApplied) {
           const bounds = [];
 
@@ -267,7 +373,7 @@ const MapComponent = forwardRef(
           console.error('Map Error:', error);
           Alert.alert(
             'Map Error',
-            'Failed to load the OpenStreetMap view. Please verify your internet connection and try again.'
+            'Failed to load the map view. Please check your internet connection.'
           );
         }
       },
