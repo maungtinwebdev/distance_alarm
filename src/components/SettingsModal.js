@@ -8,6 +8,7 @@ const SettingsModal = ({
   selectedVibration, availableVibrations, onVibrationChange,
   customVibrationDuration, onCustomVibrationChange,
   busStopNotifyRadius, onNotifyRadiusChange,
+  alarmVolume, onAlarmVolumeChange,
   isDarkMode, onThemeToggle,
 }) => {
   const theme = useTheme();
@@ -150,6 +151,28 @@ const SettingsModal = ({
                   outlineStyle={{ borderRadius: RADIUS.sm }}
                 />
               )}
+            </View>
+
+            {/* Alarm Volume */}
+            <View style={[styles.section, { backgroundColor: sectionBg }]}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionIcon}>🔊</Text>
+                <Text variant="titleSmall" style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+                  Alarm Volume (%)
+                </Text>
+              </View>
+              <Text variant="bodySmall" style={[styles.sectionDesc, { color: theme.colors.onSurfaceVariant }]}>
+                Adjust the volume specifically for the alarm song
+              </Text>
+              <TextInput
+                mode="outlined"
+                value={String(alarmVolume)}
+                onChangeText={onAlarmVolumeChange}
+                keyboardType="numeric"
+                left={<TextInput.Icon icon="volume-high" />}
+                style={styles.input}
+                outlineStyle={{ borderRadius: RADIUS.sm }}
+              />
             </View>
 
             {/* Bus Stop Notify Radius */}

@@ -64,6 +64,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   const [availableVibrations, setAvailableVibrations] = useState([]);
   const [customVibrationDuration, setCustomVibrationDuration] = useState('500');
   const [busStopNotifyRadius, setBusStopNotifyRadius] = useState('150');
+  const [alarmVolume, setAlarmVolume] = useState('100');
 
   // ── Alarm Mode State ──
   const [destination, setDestination] = useState(null);
@@ -186,6 +187,8 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
       setAvailableVibrations(getAvailableVibrations());
       const sd = await getCustomVibrationDuration();
       setCustomVibrationDuration(sd ? sd.toString() : '500');
+      const av = await AsyncStorage.getItem('alarmVolume');
+      if (av !== null) setAlarmVolume(Math.round(parseFloat(av) * 100).toString());
       const dm = await AsyncStorage.getItem('darkMode');
       if (dm !== null) setIsDarkMode(dm === 'true');
       const nr = await AsyncStorage.getItem('busStopNotifyRadius');
@@ -980,6 +983,12 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
         onCustomVibrationChange={async (d) => { setCustomVibrationDuration(d); await saveCustomVibrationDuration(parseInt(d) || 500); }}
         busStopNotifyRadius={busStopNotifyRadius}
         onNotifyRadiusChange={(r) => { setBusStopNotifyRadius(r); AsyncStorage.setItem('busStopNotifyRadius', r); }}
+        alarmVolume={alarmVolume}
+        onAlarmVolumeChange={(v) => { 
+          setAlarmVolume(v); 
+          const floatVol = (parseInt(v) || 100) / 100;
+          AsyncStorage.setItem('alarmVolume', floatVol.toString()); 
+        }}
         isDarkMode={isDarkMode}
         onThemeToggle={handleThemeToggle}
       />

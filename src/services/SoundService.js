@@ -63,6 +63,9 @@ export const playAlarmSong = async () => {
     // Start continuous looping hardware vibration (works everywhere)
     Vibration.vibrate([0, 500, 200, 500, 200], true);
 
+    const volumeStr = await AsyncStorage.getItem('alarmVolume');
+    const volume = volumeStr ? parseFloat(volumeStr) : 1.0;
+
     // expo-audio native module in Expo Go doesn't match the JS version,
     // so only use audio playback in development/production builds.
     if (!isExpoGo) {
@@ -74,7 +77,7 @@ export const playAlarmSong = async () => {
 
       alarmSoundPlayer = createAudioPlayer('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-14.mp3');
       alarmSoundPlayer.loop = true;
-      alarmSoundPlayer.volume = 1.0;
+      alarmSoundPlayer.volume = volume;
       alarmSoundPlayer.play();
     }
   } catch (error) {
