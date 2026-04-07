@@ -83,6 +83,9 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   const [notifSearch, setNotifSearch] = useState('');
   const [notifResults, setNotifResults] = useState([]);
   const [isNotifSearching, setIsNotifSearching] = useState(false);
+  
+  // ── Street bus stops ──
+  const [streetStops, setStreetStops] = useState([]);
   const notifSearchTimeout = useRef(null);
   const notifiedStopsRef = useRef(new Set());
 
@@ -246,6 +249,18 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
     };
     detect();
   }, [location, isTracking, activeMode, busStopNotifyRadius]);
+
+  // ── Fetch nearby street bus stops for map ──
+  useEffect(() => {
+    if (!location) return;
+    const fetchStreetStops = async () => {
+      try {
+        const stops = await fetchNearbyBusStops(location.latitude, location.longitude, 2000);
+        setStreetStops(stops || []);
+      } catch (e) {}
+    };
+    fetchStreetStops();
+  }, [location]);
 
   // ── Foreground tracking ──
   const startForegroundTracking = async () => {
@@ -567,6 +582,7 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
             currentLocation={location}
             destination={destination}
             alarmRadius={activeMode === 'alarm' ? (parseFloat(alarmRadius) || 0) : (parseFloat(busStopNotifyRadius) || 0)}
+            busStops={[...alarmResults, ...notifResults, nearestStop, nextStop, ...streetStops].filter(Boolean)}
             onPress={handleMapPress}
           />
         )}

@@ -138,6 +138,19 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
         border-radius: 50%;
         background: rgba(229, 57, 53, 0.15);
       }
+
+      .bus-marker {
+        width: 20px;
+        height: 20px;
+        background-color: #fff;
+        border: 2px solid #43A047;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        font-size: 10px;
+      }
     </style>
   </head>
   <body>
@@ -154,6 +167,7 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
         userMarker: null,
         destinationMarker: null,
         alarmCircle: null,
+        busStopMarkers: [],
         initialViewApplied: false,
       };
 
@@ -237,6 +251,10 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
           state.destinationMarker = null;
         }
 
+        const bounds = [];
+        if (config.currentLocation) bounds.push([config.currentLocation.latitude, config.currentLocation.longitude]);
+        if (config.destination) bounds.push([config.destination.latitude, config.destination.longitude]);
+
         // ── Alarm radius circle ──
         if (state.alarmCircle) {
           state.map.removeLayer(state.alarmCircle);
@@ -257,18 +275,33 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
           ).addTo(state.map);
         }
 
+        // ── Bus stops ──
+        state.busStopMarkers.forEach(m => state.map.removeLayer(m));
+        state.busStopMarkers = [];
+        
+        if (config.busStops && config.busStops.length > 0) {
+          const bsIcon = L.divIcon({
+            className: 'bus-marker',
+            html: '🚏',
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          });
+          
+          config.busStops.forEach(stop => {
+            const latlng = [stop.lat || stop.latitude, stop.lon || stop.longitude];
+            // Don't render a bus stop exactly where the destination is
+            if (config.destination && Math.abs(latlng[0] - config.destination.latitude) < 0.0001 && Math.abs(latlng[1] - config.destination.longitude) < 0.0001) {
+              return;
+            }
+            const m = L.marker(latlng, { icon: bsIcon }).addTo(state.map);
+            if (stop.name) m.bindPopup(stop.name);
+            state.busStopMarkers.push(m);
+            bounds.push(latlng); // Add bus stop to bounds to fit screen
+          });
+        }
+
         // ── Initial bounds ──
-        if (!state.initialViewApplied) {
-          const bounds = [];
-
-          if (config.currentLocation) {
-            bounds.push([config.currentLocation.latitude, config.currentLocation.longitude]);
-          }
-
-          if (config.destination) {
-            bounds.push([config.destination.latitude, config.destination.longitude]);
-          }
-
+        if (!state.initialViewApplied && bounds.length > 0) {
           if (bounds.length > 1) {
             state.map.fitBounds(bounds, { padding: [48, 48] });
           } else if (bounds.length === 1) {
@@ -276,6 +309,10 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
           }
 
           state.initialViewApplied = true;
+        } else if (state.initialViewApplied && config.busStops && config.busStops.length > 0 && bounds.length > 0) {
+          if (bounds.length > 1) {
+            state.map.fitBounds(bounds, { padding: [48, 48] });
+          }
         }
       }
 
@@ -311,6 +348,7 @@ const MapComponent = forwardRef(
       currentLocation,
       destination,
       alarmRadius = 0,
+      busStops = [],
       onPress,
     },
     ref
@@ -321,6 +359,7 @@ const MapComponent = forwardRef(
       currentLocation,
       destination,
       alarmRadius,
+      busStops,
     }));
 
     const mapConfig = useMemo(
@@ -329,8 +368,9 @@ const MapComponent = forwardRef(
         currentLocation,
         destination,
         alarmRadius,
+        busStops,
       }),
-      [alarmRadius, currentLocation, destination, initialRegion]
+      [alarmRadius, currentLocation, destination, initialRegion, busStops]
     );
 
     useImperativeHandle(ref, () => ({
