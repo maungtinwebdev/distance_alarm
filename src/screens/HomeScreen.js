@@ -253,6 +253,36 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
     detect();
   }, [location, isTracking, activeMode, busStopNotifyRadius]);
 
+  // ── Volume button listener to stop alarm ──
+  useEffect(() => {
+    let volSub = null;
+    let initialVol = null;
+
+    if (!isExpoGo) {
+      try {
+        const { VolumeManager } = require('react-native-volume-manager');
+        if (isTracking) {
+          volSub = VolumeManager.addVolumeListener((result) => {
+            if (initialVol === null) {
+              initialVol = result.volume;
+              return;
+            }
+            if (result.volume < initialVol) {
+              stopTracking();
+            }
+            initialVol = result.volume;
+          });
+        }
+      } catch (e) {
+        console.warn('VolumeManager error:', e);
+      }
+    }
+
+    return () => {
+      if (volSub) volSub.remove();
+    };
+  }, [isTracking]);
+
   // ── Fetch nearby street bus stops for map ──
   useEffect(() => {
     if (!location) return;
@@ -389,10 +419,22 @@ const HomeScreen = ({ onThemeChange, isDarkMode: initialDarkMode }) => {
   };
 
   // ── Map press ──
-  const handleMapPress = (e) => {
+  const handleMapPress = async (e) => {
     if (!isTracking && activeMode === 'alarm') {
-      setDestination(e.nativeEvent.coordinate);
+      const coord = e.nativeEvent.coordinate;
+      setDestination(coord);
       setSelectedBusStop(null); setAlarmSearch('');
+      
+      try {
+        resetBusStopCache();
+        const radiusToUse = parseFloat(alarmRadius) || 500;
+        const stops = await fetchNearbyBusStops(coord.latitude, coord.longitude, radiusToUse);
+        if (stops && stops.length > 0) {
+          setAlarmResults(stops.slice(0, 5));
+        } else {
+          setAlarmResults([]);
+        }
+      } catch (err) {}
     }
   };
 

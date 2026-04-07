@@ -282,7 +282,7 @@ const buildMapHtml = (config) => `<!DOCTYPE html>
         if (config.busStops && config.busStops.length > 0) {
           const bsIcon = L.divIcon({
             className: 'bus-marker',
-            html: '🚏',
+            html: '🚌',
             iconSize: [20, 20],
             iconAnchor: [10, 10],
           });
